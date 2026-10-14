@@ -170,7 +170,7 @@ WFontData * WFont::GetChar(unsigned int c)
 			temp->data=0;
 			m_Data[pos].freq=m_Freq;
 			m_Data[pos].c=c;
-			m_Data[pos].id=m_CacheNum;
+			m_Data[pos].id=(unsigned short)m_CacheNum;
 			++m_CacheNum;
 		}
 		else {
@@ -189,7 +189,7 @@ WFontData * WFont::GetChar(unsigned int c)
 				}
 				m_Data[pos].freq=m_Freq;
 				m_Data[pos].c=c;
-				m_Data[pos].id=id;
+				m_Data[pos].id=(unsigned short)id;
 			}
 			else {
 //				插入位置在删除点的前面
@@ -198,7 +198,7 @@ WFontData * WFont::GetChar(unsigned int c)
 				}
 				m_Data[pos].freq=m_Freq;
 				m_Data[pos].c=c;
-				m_Data[pos].id=id;
+				m_Data[pos].id=(unsigned short)id;
 			}
 			m_Freq-=min;
 			if (m_Locked>0) m_Locked-=min;
@@ -214,7 +214,7 @@ WFontData * WFont::GetChar(unsigned int c)
 			m_Data[i]=m_Data[i-1];
 		m_Data[pos].freq=m_Freq;
 		m_Data[pos].c=c;
-		m_Data[pos].id=m_CacheNum;
+		m_Data[pos].id=(unsigned short)m_CacheNum;
 		++m_CacheNum;
 	}
 
@@ -227,12 +227,12 @@ WFontData * WFont::GetChar(unsigned int c)
 
 		rect.top=0,rect.left=0,rect.right=m_MaxWidth,rect.bottom=m_Height;
 		if (c<256) {
-			str[0]=c,str[1]=0;
+			str[0]=(char)c,str[1]=0;
 			DrawText(m_FontDC,str,1,&rect,DT_LEFT|DT_NOPREFIX);
 			GetTextExtentPoint(m_FontDC,str,1,&si);
 		}
 		else {
-			str[0]=c>>8,str[1]=c&0xff;
+			str[0]=(char)(c>>8),str[1]=(char)(c&0xff);
 			DrawText(m_FontDC,str,2,&rect,DT_LEFT|DT_NOPREFIX);
 			GetTextExtentPoint(m_FontDC,str,2,&si);
 		}
@@ -342,7 +342,7 @@ WSERR WChar::Create(WFont &font,unsigned int c,WPixel color)
 	data->w=font_data->w,data->h=font_data->h,
 	data->data=font_data->data,
 	data->kx=font_data->kx,data->ky=font_data->ky,
-	data->width=font_data->width,
+	data->width=(short)font_data->width,
 	data->color=color;
 	SetData(data);
 	return WS_OK;
@@ -390,8 +390,8 @@ static BLIT_FUNC _font_func[2]={
 
 BLIT_FUNC WChar::DrawFunc(DWORD style) const
 {
-	WCharStruct *data=GetCharStruct();
-	ASSERT(data!=0);
+	ASSERT(GetCharStruct()!=0);
+	if (style>=2) return 0;
 	return _font_func[style];
 }
 

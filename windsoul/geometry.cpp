@@ -422,7 +422,6 @@ WSERR _stdcall _draw_line_xor(WBmpStruct *bmp,const WLineStruct *line)
 	int dy = y2-y1;
 	int i1, i2;
 	int dd;
-	int alpha=line->userdata>>3;
 	WPixel *pixel,color;
 	if (line->positive) {
 		if (dx >= dy) {
@@ -537,7 +536,6 @@ WSERR _stdcall _draw_hline_xor(WBmpStruct *bmp,const WLineStruct *line)
 {
 	int y=bmp->ky-line->ky;
 	int x1,x2;
-	int alpha=line->userdata>>3;
 	WPixel *pixel,color;
 	if (y<0 || y>=bmp->h) return WS_OK;
 	color=line->color;
@@ -554,7 +552,6 @@ WSERR _stdcall _draw_vline_xor(WBmpStruct *bmp,const WLineStruct *line)
 {
 	int x=bmp->kx-line->kx;
 	int y1,y2;
-	int alpha=line->userdata>>3;
 	WPixel *pixel,color;
 	if (x<0 || x>=bmp->w) return WS_OK;
 	color=line->color;
@@ -661,7 +658,7 @@ WBox& WBox::Size(int w,int h)
 
 BLIT_FUNC WBox::DrawFunc(DWORD style) const
 {
-	ASSERT(style<6);
+	if (style>=6) return 0;			// 越界保护, 防止读越界函数指针
 	BLIT_FUNC blit=(BLIT_FUNC)_box_func[style];
 	if (blit==0) return 0;
 	return blit;
@@ -683,7 +680,7 @@ WSERR _stdcall _grey_box16(WBmpStruct *bmp,const WBoxStruct *box)
 	for (int i=0;i<h;i++) {
 		for (int j=0;j<w;j++,++p) {
 			int bw=(p->red*38+p->green*37+p->blue*16)>>7;
-			p->color=bw<<11|bw<<6|bw;
+			p->color=(WORD)(bw<<11|bw<<6|bw);
 		}
 		p+=pitch;
 	}

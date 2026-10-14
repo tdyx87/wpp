@@ -243,7 +243,7 @@ WSERR WAlphaBitmap::Combine(const WAlphaBitmap& bmp)
 		line_des=ChannelLine(i)+from_offset;
 		line_src=bmp.ChannelLine(src_line)+src_offset;
 		for (j=from_offset;j<to_offset;j++) {
-			*line_des=255-((255-*line_des)*(255-*line_src)+255)/256;
+			*line_des=(BYTE)(255-((255-*line_des)*(255-*line_src)+255)/256);
 			++line_des,++line_src;
 		}
 	}

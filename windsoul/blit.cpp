@@ -77,6 +77,7 @@ BLIT_FUNC WBitmap::ClearFunc()
 
 BLIT_FUNC WBitmap::DrawFunc(DWORD style) const
 {
+	if (style>=16) return 0;			// 越界保护: style 为 BLIT_* 位组合, 合法范围 0..15
 	BLIT_FUNC blit=(BLIT_FUNC)_blit_func[style];
 	if (blit==0) return 0;
 	return blit;

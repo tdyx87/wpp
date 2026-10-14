@@ -30,7 +30,7 @@ WFont font;
 
 void MyApp::draw_canvas(int xx,int yy)
 {
-	static kk=0;
+	static int kk=0;
 	subcanvas->MoveTo(-kk,-kk);
 	subcanvas->SetPos(0,0);
 	subcanvas->Draw("SubCanvas Test",0xffffff);
@@ -123,8 +123,8 @@ void MyApp::AfterCreate()
 	for (i=0;i<MAX_OBJ;i++) {
 		trans[i].lx=trans[i].ly=400;
 		trans[i].x=trans[i].y=400.0;
-		trans[i].dx=float(rand()%60-30)/10.0;
-		trans[i].dy=float(rand()%60-30)/10.0;
+		trans[i].dx=float(rand()%60-30)/10.0f;
+		trans[i].dy=float(rand()%60-30)/10.0f;
 		trans[i].times=0;
 		trans[i].alpha=rand()%128+128;
 	}
@@ -187,12 +187,10 @@ void MyApp::Idle()
 {
 	WCanvas &canvas=*pcanvas;
 	static DWORD thistime,lasttime,timecount=0,fpscount=0;
-	int sx,sy;
-
-	int i,j;
+	int i;
 	WString fps;
 	if (pcanvas==0) return;
-	static xx=0;
+	static int xx=0;
 
 //	canvas.Change();
 //	canvas(200,200).Draw(temp(192),BLIT_TRANS);
@@ -216,7 +214,7 @@ void MyApp::Idle()
 //	canvas.DrawEx(WLine(400,++xx,0)(32),BLIT_TRANS);
 
 	if (iswalk) {
-		static tt=0;
+		static int tt=0;
 		if (++tt==2)
 			tt=2;
 		canvas.Move(offset[dis].x,offset[dis].y);

@@ -35,6 +35,8 @@
 #pragma warning (disable: 4786 )
 #pragma warning (disable: 4660 )
 
+#include <string.h>
+
  ///	常用运算模板
 /////////////////////////
 
@@ -137,11 +139,8 @@ inline WRect WRect::VerRect(const WRect &rect) const
 
 inline void WMemCpy(void *dest, const void *src, unsigned count)
 {
-	unsigned i;
-	BYTE *d=(BYTE *)dest;
-	const BYTE *s=(const BYTE *)src;
-	for (i=0;i<count;i++,++d,++s)
-		*d=*s;
+	// 原先为逐字节循环; 调用方均为不重叠缓冲区, 直接用运行库 memcpy 更快
+	memcpy(dest,src,count);
 }
 
  ///	字符串

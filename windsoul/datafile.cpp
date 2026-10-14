@@ -204,7 +204,7 @@ static DWORD pack_name(const char *filename,int number=0)
 	char buffer[256];
 	char ext[5]=".wdf";
 	if (number>0) {
-		ext[3]='0'+number;
+		ext[3]=(char)('0'+number);
 	}
 	int i;
 	for (i=0;filename[i];i++) {
@@ -237,10 +237,13 @@ WSERR WFile::Load(const char *filename)
 	f=CreateFile(filename,GENERIC_READ,FILE_SHARE_READ,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
 	if (f==INVALID_HANDLE_VALUE) {
 		DWORD fid=real_name(filename);
-		for (int i=0;i<10;i++) {
+		// 原代码依赖 VC6 的 for 作用域泄漏(j/i 在循环外仍可见);
+		// VS2008 起 for 内声明的作用域限定在循环内, 故显式声明
+		int i,j;
+		for (i=0;i<10;i++) {
 			DWORD id=pack_name(filename,i);
 			WDataFileIndex * pf;
-			for (int j=0;j<MAXDATAFILE;j++) {
+			for (j=0;j<MAXDATAFILE;j++) {
 				if (wdf_files::instance(j).IsOpen(id)) {
 					pf=wdf_files::instance(j).SearchFile(fid);
 					if (pf==0) {
@@ -297,10 +300,13 @@ WSERR WFile::Open(const char *filename)
 	f=CreateFile(filename,GENERIC_READ,FILE_SHARE_READ,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
 	if (f==INVALID_HANDLE_VALUE) {
 		DWORD fid=real_name(filename);
-		for (int i=0;i<10;i++) {
+		// 原代码依赖 VC6 的 for 作用域泄漏(j/i 在循环外仍可见);
+		// VS2008 起 for 内声明的作用域限定在循环内, 故显式声明
+		int i,j;
+		for (i=0;i<10;i++) {
 			DWORD id=pack_name(filename,i);
 			WDataFileIndex * pf;
-			for (int j=0;j<MAXDATAFILE;j++) {
+			for (j=0;j<MAXDATAFILE;j++) {
 				if (wdf_files::instance(j).IsOpen(id)) {
 					pf=wdf_files::instance(j).SearchFile(fid);
 					if (pf==0) {

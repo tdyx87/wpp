@@ -31,14 +31,16 @@ INLINE void WThreadLock(long * atom)
 {
 	if (InterlockedExchange(atom,1)) {
 		// 别的地方 lock 住了
-		for (int i=0;InterlockedExchange(atom,1) && i<128;i++) {
+		int i;
+		for (i=0;InterlockedExchange(atom,1) && i<128;i++) {
 			Sleep(0);
 		}
 		if (i>=128) {
-			for (int i=0;InterlockedExchange(atom,1) && i<16;i++) {
+			int j;
+			for (j=0;InterlockedExchange(atom,1) && j<16;j++) {
 				Sleep(50);
 			}
-			ASSERT(i<16 && "lock 时间太长了");
+			ASSERT(j<16 && "lock 时间太长了");
 		}
 	}
 }

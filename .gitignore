@@ -1,0 +1,27 @@
+# CMake build trees
+/build/
+/out/
+cmake-build-*/
+
+# Visual Studio / MSVC artifacts that may appear next to the sources
+*.user
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+*.ilk
+*.pdb
+*.exp
+*.idb
+*.tlog
+*.lastbuildstate
+*.log
+
+# CMake itself
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+
+# Agent working data (memory + scratch builds) -- keep out of the repo
+.workbuddy-ai/
+*.ppm

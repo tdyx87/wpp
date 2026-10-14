@@ -214,7 +214,7 @@ int WTimer::CPU()
 	DWORD  total_cycles=0, cycles;	// Clock cycles elapsed 
 									//   during test
 	
-	DWORD  stamp0, stamp1;			// Time Stamp Variable 
+	DWORD  stamp0=0, stamp1=0;			// Time Stamp Variable 
 									//   for beginning and end 
 									//   of test
 

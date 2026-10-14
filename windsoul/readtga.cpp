@@ -102,7 +102,7 @@ WSERR WAlphaBitmap::LoadTGA(const void *tgadata)
 		// RLE Ñ¹Ëõ
 				int run=0,raw=0;
 				WPixel runpixel;
-				int runalpha;
+				int runalpha=0;
 				int red,green,blue;
 				int rr,gg,bb;
 				bb=*(BYTE*)(dataptr+1);
@@ -115,7 +115,7 @@ WSERR WAlphaBitmap::LoadTGA(const void *tgadata)
 					alpha_line=ChannelLine(i);
 					for (j=0;j<width;) {
 						if (run>0) {
-							line[j]=runpixel,alpha_line[j]=runalpha,--run;
+							line[j]=runpixel,alpha_line[j]=(BYTE)runalpha,--run;
 							++j;
 						}
 						else if (raw>0) {
@@ -198,7 +198,7 @@ WSERR WAlphaBitmap::LoadTGA(const void *tgadata)
 					line[j]=WPixel(red,green,blue);
 				}
 //				alpha=MAX(MAX(MAX(red,green),blue),alpha);
-				alpha_line[j]=alpha;
+				alpha_line[j]=(BYTE)alpha;
 			}
 		}
 	}
@@ -206,7 +206,7 @@ WSERR WAlphaBitmap::LoadTGA(const void *tgadata)
 // RLE Ñ¹Ëõ
 		int run=0,raw=0;
 		WPixel runpixel;
-		int runalpha;
+		int runalpha=0;
 		int red,green,blue,alpha;
 		int rr=0,gg=0,bb=0;
 		if ((*(BYTE*)(dataptr+4))==0) {
@@ -222,7 +222,7 @@ WSERR WAlphaBitmap::LoadTGA(const void *tgadata)
 			alpha_line=ChannelLine(i);
 			for (j=0;j<width;) {
 				if (run>0) {
-					line[j]=runpixel,alpha_line[j]=runalpha,--run;
+					line[j]=runpixel,alpha_line[j]=(BYTE)runalpha,--run;
 					++j;
 				}
 				else if (raw>0) {
@@ -247,7 +247,7 @@ WSERR WAlphaBitmap::LoadTGA(const void *tgadata)
 						else alpha=32;
 						line[j]=WPixel(red,green,blue);
 					}
-					alpha_line[j]=alpha;
+					alpha_line[j]=(BYTE)alpha;
 					--raw;
 					++j;
 				}
@@ -303,8 +303,8 @@ WSERR WAlphaBitmap::SaveTGA(const char *filename) const
 	memset(&head,0,sizeof(TGAFILEHEADER));
 	head.bImageType=2;	// ²»Ñ¹Ëõ
 	head.bBits=32;		// 32bit
-	head.wWidth=GetW();
-	head.wHeight=GetH();
+	head.wWidth=(WORD)GetW();
+	head.wHeight=(WORD)GetH();
 	head.bAlphaBits=8;
 
 	fwrite(&head,1,sizeof(head),f);

@@ -62,7 +62,7 @@ struct WPixel {
 	};
 	WPixel() {}
 	WPixel(DWORD c) {color=(WORD)((c>>8&0xf800)|(c>>5&0x7e0)|(c>>3&0x1f));}
-	WPixel(int r,int g,int b) : red(r>>3),green(g>>2),blue(b>>3) {}
+	WPixel(int r,int g,int b) : red((WORD)(r>>3)),green((WORD)(g>>2)),blue((WORD)(b>>3)) {}
 	operator DWORD() const {return (color<<5&0x7fc00)|(color<<8&0xf80000)|((color<<3|(color&7))&0x3ff);}
 };
 

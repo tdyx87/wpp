@@ -5,6 +5,21 @@
 #include <algorithm>
 #include <vector>
 
+// 由于命令行参数长度未知，直接 strcpy/strcat 可能越界；
+// 下面两个辅助函数保证目标缓冲区以 0 结尾且不越界。
+static void safe_copy(char *dst,size_t n,const char *src)
+{
+	if (n==0) return;
+	while (--n && *src) *dst++=*src++;
+	*dst=0;
+}
+
+static void safe_cat(char *dst,size_t n,const char *src)
+{
+	size_t len=strlen(dst);
+	if (len<n-1) safe_copy(dst+len,n-len,src);
+}
+
 #define DWORD unsigned long
 
 struct FILE_LST {
@@ -188,7 +203,7 @@ int FileList::ReadListOnly(const char *name)
 {
 	FILE *f;
 	int i;
-	char *p;
+	char *p=0;
 	int size=file_size(name);
 	bool in_line;
 	if (size<0) return -1;
@@ -231,7 +246,7 @@ int FileList::ReadList(const char *name)
 {
 	FILE *f;
 	int i;
-	char *p;
+	char *p=0;
 	int size=file_size(name);
 	bool in_line;
 	if (size<0) return -1;
@@ -331,7 +346,7 @@ bool FileList::WriteFile(FILE *f,int n,bool findspace)
 		return false;
 
 	long pos=ftell(f);
-	int space=-1,space_n;
+	int space=-1,space_n=-1;
 	int i;
 
 	g=fopen(m_List[n].name,"rb");
@@ -429,7 +444,7 @@ void FileList::ClearTail(unsigned long id)
 
 void delete_file(FILE *f,int total,std::vector<FILE_LST>& list,int n)
 {
-	assert(total == list.size() );
+	assert(total >= 0 && (size_t)total == list.size() );
 	assert(n < total );
 	int i;
 	for (i=0;i<total;i++) {
@@ -591,10 +606,10 @@ int main(int agv,char *agc[])
 	if (agc[1][0]=='x') {
 		char filename[256];
 		int i;
-		strcpy(lstname,agc[2]);
-		strcpy(dataname,agc[2]);
-		strcat(lstname,".lst");
-		strcat(dataname,".wdf");
+		safe_copy(lstname,sizeof(lstname),agc[2]);
+		safe_copy(dataname,sizeof(dataname),agc[2]);
+		safe_cat(lstname,sizeof(lstname),".lst");
+		safe_cat(dataname,sizeof(dataname),".wdf");
 		if (!file_exist(lstname)) {
 			printf("Can't open list file[.lst]\n");
 			return -1;
@@ -615,8 +630,8 @@ int main(int agv,char *agc[])
 			FILE *f;
 			int j;
 			static char buffer[1024];
-			strcpy(filename,agc[2]);
-			strcat(filename,"\\");
+			safe_copy(filename,sizeof(filename),agc[2]);
+			safe_cat(filename,sizeof(filename),"\\");
 			int n;
 			n=list.IsFileExist(i,old_list,old_number);
 			printf("%s [%x] ",list.GetName(i),list.GetID(i));
@@ -624,7 +639,7 @@ int main(int agv,char *agc[])
 				printf(" Can't find\n");
 				continue;
 			}
-			strcat(filename,list.GetName(i));
+			safe_cat(filename,sizeof(filename),list.GetName(i));
 			char *path=strchr(filename,'\\');
 			path=strchr(path+1,'\\');
 			if (path) {
@@ -650,10 +665,10 @@ int main(int agv,char *agc[])
 		return 0;
 
 	}
-	strcpy(lstname,agc[1]);
-	strcpy(dataname,agc[1]);
-	strcat(lstname,".lst");
-	strcat(dataname,".wdf");
+	safe_copy(lstname,sizeof(lstname),agc[1]);
+	safe_copy(dataname,sizeof(dataname),agc[1]);
+	safe_cat(lstname,sizeof(lstname),".lst");
+	safe_cat(dataname,sizeof(dataname),".wdf");
 	if (!file_exist(lstname)) {
 		printf("Can't open list file[.lst]\n");
 		return -1;

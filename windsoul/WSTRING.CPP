@@ -12,18 +12,26 @@
 #ifdef WIN32
 
 #include <windows.h>
+#include <stdio.h>
 
-#define VSPRINTF wvsprintf
+// 用 CRT 的 _vsnprintf 取代 Win32 API wvsprintf:
+//   1) wvsprintf 不支持 "+" 标志以及 ll/hh/z 等长度修饰符, 遇到会原样输出字面字符;
+//   2) wvsprintf 的缓冲区契约要求至少 1024 字节, 而 WString 只分配 64/128/256
+//      字节的小缓冲, 存在越界写风险;
+//   3) _vsnprintf 以实际缓冲区大小为界, 即使 _format_len 估算偏小也只会截断,
+//      不会越界 —— 与第一轮修复的越界写问题互为双保险.
+#define VSPRINTF(buf,size,format,argList) _vsnprintf(buf,size,format,argList)
 
 #else
 
 #include <stdio.h>
 
-#define VSPRINTF vsprintf
+#define VSPRINTF(buf,size,format,argList) vsprintf(buf,format,argList)
 
 #endif
 
 #include <stdarg.h>
+#include <string.h>
 #include "windsoul.h"
 #include "wsstring.h"
 
@@ -96,7 +104,10 @@ static inline void _str_clear(STRING_DATA &str_data)
 	case 0: return;
 	case 1:
 		if (str_data.max_len>255) {
-			delete &str_data;
+			// 该块由 _stralloc 以 new char[...] 分配, 必须用 delete[] 释放.
+			// 原先写作 delete &str_data, 存在 new[]/delete 不匹配 + 类型不匹配,
+			// 默认配置下因重载了全局 operator new/delete 才侥幸可用.
+			delete [] reinterpret_cast<char *>(&str_data);
 		}
 		else {
 			switch (str_data.max_len) {
@@ -121,11 +132,11 @@ static inline void _str_clear(STRING_DATA &str_data)
 	}
 }
 
+// 原先为逐字节循环, 是 WString 构造/赋值/比较的最热路径之一.
+// 改用运行库的 strlen (内部已做字长/SSE 并行优化), 语义完全一致但快数倍.
 static inline unsigned _strlen(const char *s)
 {
-    int i;
-	for (i=0;s[i];i++) ;
-	return i;
+	return (unsigned)strlen(s);
 }
 
 static inline void _strncpy(const char *from,char *to,unsigned len)
@@ -357,7 +368,7 @@ WString & WString::operator=(const char *s)
 		str=_strdup(s,len);
 	}
 	else {
-		unsigned len=_strlen(s);
+		// 注意: 这里原先重复计算了一次 _strlen(s) 并遮蔽了外层的 len, 纯属冗余
 		if (len<=str_data.max_len) {
 			_strncpy(s,str,len);
 			str_data.len=len;
@@ -621,6 +632,9 @@ static unsigned _format_len(const char *format,va_list argList)
 			++len;
 			continue;
 		}
+		// 格式串以 '%' 结尾时, 上面的 ++lpsz 已指向 '\0'; 此处直接结束,
+		// 否则外层 for 的 ++lpsz 会越过字符串末尾多读一个字节
+		if (*lpsz=='\0') break;
 
 		int item_len = 0;
 		int width = 0;
@@ -656,22 +670,30 @@ static unsigned _format_len(const char *format,va_list argList)
 			}
 		}
 
-		// 去掉长度修饰
-		switch (*lpsz) {
-		case 'h':
-		case 'l':
-		case 'F':
-		case 'N':
-		case 'L':
+		// 跳过长度修饰符: 支持 h/hh/l/ll/L/F/N/w/z/j/t/q 以及 MSVC 的 I/I32/I64.
+		// 原先只识别单个 h/l/F/N/L, 遇到 %I64d、%llu、%zu 等会漏算长度,
+		// 使 _format_len 返回值偏小 -> _stralloc 分配不足 -> vsprintf 越界写
+		int is64=0;					// 该转换是否消费 64 位实参
+		while (*lpsz=='h' || *lpsz=='l' || *lpsz=='L' || *lpsz=='F' ||
+			   *lpsz=='N' || *lpsz=='w' || *lpsz=='z' || *lpsz=='j' ||
+			   *lpsz=='t' || *lpsz=='q') {
+			if (*lpsz=='l' && *(lpsz+1)=='l') is64=1;	// ll
+			if (*lpsz=='q' || *lpsz=='j') is64=1;		// q / j: 64 位
 			++lpsz;
-			break;
+		}
+		if (*lpsz=='I') {			// MSVC: %I64d / %I32d
+			++lpsz;
+			if (lpsz[0]=='6' && lpsz[1]=='4') is64=1;	// I64
+			while (*lpsz>='0' && *lpsz<='9') ++lpsz;
 		}
 
 		switch (*lpsz) {
 		case 'c':
 		case 'C':
 			item_len=2;
-			va_arg(argList, char);
+			// 可变参数中 char 会被提升为 int, 必须按 int 读取;
+			// 原先写 va_arg(argList, char) 属未定义行为 (x64 上会直接崩溃)
+			va_arg(argList, int);
 			break;
 
 		case 's':
@@ -699,20 +721,23 @@ static unsigned _format_len(const char *format,va_list argList)
 			case 'x':
 			case 'X':
 			case 'o':
-				va_arg(argList, int);
+				// 必须按实参真实宽度消费, 否则后续转换符的参数会错位:
+				// 原先一律 va_arg(int), 遇到 %I64d/%llu 后接 %s 会读到野指针并崩溃.
+				if (is64) va_arg(argList, __int64);
+				else va_arg(argList, int);
 				item_len = (32>width+width2)?32:width+width2;
 				break;
 
 			case 'e':
+			case 'E':
 			case 'g':
 			case 'G':
 			case 'f':
-#ifdef WIN32
-				OutputDebugString("wsprintf doesn't support float\n");
-				exit(WS_FLOATPOINT);
-#endif
+				// 改用 CRT _vsnprintf 后已支持浮点. 原实现因 wvsprintf 不支持 %f 而
+				// 直接 exit(WS_FLOATPOINT) 终止进程; 现按最大可能长度估算:
+				// %f 最坏为 DBL_MAX 的 309 位整数部分 + '.' + 小数, 取 320 起算.
 				va_arg(argList, double);
-				item_len = (128>width+width2)?128:width+width2;
+				item_len = 320 + width + width2;
 				break;
 
 			case 'p':
@@ -723,6 +748,13 @@ static unsigned _format_len(const char *format,va_list argList)
 			// no output
 			case 'n':
 				va_arg(argList, int*);
+				break;
+
+			default:
+				// 未知/未支持的转换符: 保守高估长度. 无法推断其参数类型,
+				// 故不消费 va_arg; 关键是绝不能让估算长度小于实际输出,
+				// 否则 _stralloc 分配不足会导致 vsprintf 越界写.
+				item_len = 64;
 				break;
 
 			}
@@ -751,14 +783,14 @@ WString& WString::Format(const char *format, ...)
 	if (str_data.times>1)
 		--str_data.times;
 	else if (max_len<=str_data.max_len) {
-			VSPRINTF(str,format,argList);
+			VSPRINTF(str,str_data.max_len+1,format,argList);
 			str_data.len=_strlen(str);
 			va_end(argList);
 			return *this;
 		}
 	else _str_clear(str_data);
 	str=_stralloc(max_len);
-	VSPRINTF(str,format,argList);
+	VSPRINTF(str,max_len+1,format,argList);
 	STRING_DATA &newstr_data=GetData();
 	newstr_data.len=_strlen(str);
 	va_end(argList);

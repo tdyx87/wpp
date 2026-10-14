@@ -1,0 +1,76 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2008",
+      "displayName": "Visual Studio 2008 (Win32) - verified toolchain",
+      "description": "cl 15.00 + Windows SDK v6.0A + NASM. Requires nasm on PATH.",
+      "generator": "Visual Studio 9 2008",
+      "binaryDir": "${sourceDir}/build/vs2008",
+      "cacheVariables": {
+        "CMAKE_WARN_VS9": "OFF"
+      }
+    },
+    {
+      "name": "vs2022",
+      "displayName": "Visual Studio 2022 (Win32)",
+      "description": "Modern toolset. Must be 32-bit: -A Win32 is implied.",
+      "generator": "Visual Studio 17 2022",
+      "architecture": {
+        "value": "Win32",
+        "strategy": "set"
+      },
+      "binaryDir": "${sourceDir}/build/vs2022"
+    },
+    {
+      "name": "vs2019",
+      "displayName": "Visual Studio 2019 (Win32)",
+      "generator": "Visual Studio 16 2019",
+      "architecture": {
+        "value": "Win32",
+        "strategy": "set"
+      },
+      "binaryDir": "${sourceDir}/build/vs2019"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2008-release",
+      "configurePreset": "vs2008",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2008-debug",
+      "configurePreset": "vs2008",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs2022-release",
+      "configurePreset": "vs2022",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "vs2008-release",
+      "configurePreset": "vs2008",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "vs2008-debug",
+      "configurePreset": "vs2008",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

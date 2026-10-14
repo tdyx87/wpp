@@ -30,7 +30,17 @@
 .:*W*:._.:*I*:._.:*N*:._.:*D*:._.:*S*:._.:*O*:._.:*U*:._.:*L*:._.:*/
 
 #include <windows.h>
+#include <mmsystem.h>
 #include <assert.h>
+
+/* Sleep() rounds up to a whole OS timer quantum, which defaults to
+   15.6 ms.  WCanvas::SleepFrame() needs a 1 ms quantum or a 16.6 ms
+   frame can never be slept out accurately. */
+#pragma comment(lib,"winmm.lib")
+
+static void AcquireTimerResolution();
+static void ReleaseTimerResolution();
+static DWORD SleepQuantum();
 #include "windsoul.h"
 #include "wscanvas.h"
 #include "canvasin.h"
@@ -64,8 +74,14 @@ WCanvas::WCanvas(int width,int height)
 
 void WCanvas::Reset(int f)
 {
-	if (f==0) m_FrameTime=0;
-	else m_FrameTime=10000/f;
+	if (f==0) {
+		m_FrameTime=0;
+		ReleaseTimerResolution();
+	}
+	else {
+		m_FrameTime=10000/f;
+		AcquireTimerResolution();
+	}
 	m_Timer.Reset();
 }
 
@@ -387,7 +403,17 @@ void WCanvas::NextFrame()
 {
 	int i,s=col*row;
 	for (i=0;i<s;i++) {
-		block[i].last=block[i].obj,
+		/* Clear last to 0, not to the previous obj pointer.
+		   WCanvas::Draw() allocates its link nodes from a pool that
+		   CANVAS_LINKPAGE::clearobj() resets to the SAME addresses every
+		   frame, so a block whose link-list head lands on the same slot
+		   two frames running would read last==obj and be skipped -- which
+		   leaves it showing the previous frame.  That is invisible while
+		   the camera is still, but while it scrolls the terrain blocks
+		   freeze on stale pixels and the split back-buffers blit a
+		   half-new / half-old frame: the screen flickers.  Forcing last
+		   to 0 marks every block that has content dirty every frame. */
+		block[i].last=0,
 		block[i].m_IsTrans=false,
 		block[i].m_IsOvl=false,
 		block[i].obj=0,
@@ -471,15 +497,6 @@ void WCanvas::SetOvlRect(int w,int h)
 			if (num>=col) num-=col;
 			b[num].obj+=0x10000;
 		}
-	}
-
-	for (i=top;i<=bottom;i++) {	
-		b=block+(i+block_y-(i+block_y>=row?row:0))*col;							
-		for (j=left;j<=right;j++) {
-			int num=j+block_x;													
-			if (num>=col) num-=col;
-			b[num].obj+=0x10000;
-		}																		
 	}
 
 // 如果链表里的矩形在这个矩形内,删掉链表中的矩形
@@ -859,6 +876,37 @@ void WCanvas::Update2DC(HDC hDC,int x,int y) const
 	}
 }
 
+/* ------------------------------------------------------------- timing */
+
+static int s_timerResolution = 0;
+
+static void AcquireTimerResolution()
+{
+	if (s_timerResolution++ == 0)
+		timeBeginPeriod(1);
+}
+
+static void ReleaseTimerResolution()
+{
+	if (s_timerResolution > 0 && --s_timerResolution == 0)
+		timeEndPeriod(1);
+}
+
+/* What one Sleep(1) really costs, in the 0.1 ms units GetTime() uses.
+   Sleep() can never return early, so this is a full timer quantum. */
+static DWORD SleepQuantum()
+{
+	static DWORD quantum = 0;
+	if (quantum == 0) {
+		WTimer q;
+		q.Reset();
+		Sleep(1);
+		quantum = q.GetTime();
+		if (quantum < 10) quantum = 10;
+	}
+	return quantum;
+}
+
 void WCanvas::SleepFrame()
 {
 	if (m_FrameTime>0) {
@@ -872,13 +920,26 @@ void WCanvas::SleepFrame()
 */
 		bool sleep=!(data->laptop);
 		while ((lastframe=m_Timer.GetTime())<m_FrameTime-data->timer) {
-			if (sleep) 
-				Sleep(5);
+			if (sleep) {
+				/* One Sleep() per iteration and only when a whole quantum
+				   still fits in what is left.  A second Sleep() would cost
+				   another 15.6 ms and turn a 60 Hz frame into 32 Hz, which
+				   is exactly what used to happen. */
+				int left=m_FrameTime-data->timer-lastframe;
+				int avoid=(int)SleepQuantum()+20;
+				if (left>avoid) Sleep((left-20)/10);
+				else Sleep(0);
+			}
 		}
 		lastframe-=m_FrameTime;
-		data->timer=lastframe/2;
+		/* Only one of the two may carry the overshoot.  Resetting the
+		   timer to -lastframe already pre-charges the next frame with it,
+		   so subtracting half of it from the target as well made the
+		   limiter flip between "no sleep at all" and "sleep twice", which
+		   is what the uneven frame pacing was. */
+		data->timer=(short)(lastframe/2);
 		if (lastframe>10000) m_Timer.Reset();
-		else m_Timer.Reset(-lastframe);
+		else m_Timer.Reset(0);
 	}
 
 }
@@ -962,6 +1023,7 @@ void WCanvas::Draw(const char *str, WPixel color)
 
 WCanvas::~WCanvas()
 {
+	if (m_FrameTime>0) ReleaseTimerResolution();
 	delete data;
 	delete [](block);
 }
