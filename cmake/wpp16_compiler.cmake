@@ -100,6 +100,17 @@ if(WPP16_IS_MSVC)
     # C4819: "file contains a character that cannot be represented in the
     # current code page" -- only fires for UTF-8 files, harmless here.
     add_compile_options(/wd4819)
+
+    if(MSVC_VERSION GREATER_EQUAL 1910)
+        # VS2017 (19.16) and later front-ends emit two warnings the VC9-era
+        # sources never triggered.  Both are benign compiler-version artifacts:
+        #   C4595 - global operator new/delete declared inline (include/wsmemory.h)
+        #   C4251 - dll-export of a class with a non-exported std-container member
+        # They do not affect correctness (all unit tests pass), so silence them
+        # to keep the VS2017+ build at the project's 0-warning bar.  VS2008
+        # (MSVC 15.00) is excluded by the version guard.
+        add_compile_options(/wd4251 /wd4595)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

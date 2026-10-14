@@ -363,9 +363,9 @@ int WTimer::CPU()
 
 	} while ( (tries < 3 ) || 		
 	          (tries < 20)&&
-	          ((abs(3 * freq -total) > 3 )||
-	           (abs(3 * freq2-total) > 3 )||
-	           (abs(3 * freq3-total) > 3 )));	
+	          ((abs((int)(3 * freq -total)) > 3 )||
+	           (abs((int)(3 * freq2-total)) > 3 )||
+	           (abs((int)(3 * freq3-total)) > 3 )));	
 					// Compare last three calculations to 
 	          		//   average of last three calculations.		
 

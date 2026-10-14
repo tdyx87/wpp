@@ -36,6 +36,22 @@
         "strategy": "set"
       },
       "binaryDir": "${sourceDir}/build/vs2019"
+    },
+    {
+      "name": "vs2017",
+      "displayName": "Visual Studio 2017 (Win32) via Ninja",
+      "description": "MSVC 14.16 (v141) + Windows 10 SDK 10.0.19041.0 driven by Ninja. The VS2017 *generator* (MSBuild) hangs on its CMake try_compiles in this environment, so we use the Ninja generator with the toolchain pointed at the non-default install C:\\2017\\Community. The bundled environment supplies INCLUDE/LIB/PATH, so `cmake --preset vs2017` works from any prompt.",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/build/vs2017",
+      "environment": {
+        "PATH": "C:/2017/Community/VC/Tools/MSVC/14.16.27023/bin/HostX86/x86;C:/Program Files (x86)/Windows Kits/10/bin/10.0.19041.0/x86;C:/Strawberry/c/bin;C:/Windows/system32;C:/Windows;C:/Windows/System32/Wbem;C:/Windows/System32/WindowsPowerShell/v1.0/",
+        "INCLUDE": "C:/2017/Community/VC/Tools/MSVC/14.16.27023/ATLMFC/include;C:/2017/Community/VC/Tools/MSVC/14.16.27023/include;C:/Program Files (x86)/Windows Kits/10/Include/10.0.19041.0/ucrt;C:/Program Files (x86)/Windows Kits/10/Include/10.0.19041.0/shared;C:/Program Files (x86)/Windows Kits/10/Include/10.0.19041.0/um;C:/Program Files (x86)/Windows Kits/10/Include/10.0.19041.0/winrt",
+        "LIB": "C:/2017/Community/VC/Tools/MSVC/14.16.27023/ATLMFC/lib/x86;C:/2017/Community/VC/Tools/MSVC/14.16.27023/lib/x86;C:/Program Files (x86)/Windows Kits/10/Lib/10.0.19041.0/ucrt/x86;C:/Program Files (x86)/Windows Kits/10/Lib/10.0.19041.0/um/x86",
+        "LIBPATH": "C:/2017/Community/VC/Tools/MSVC/14.16.27023/ATLMFC/lib/x86;C:/2017/Community/VC/Tools/MSVC/14.16.27023/lib/x86;C:/2017/Community/VC/Tools/MSVC/14.16.27023/lib/x86/store/references;C:/Windows/Microsoft.NET/Framework/v4.0.30319"
+      },
+      "cacheVariables": {
+        "CMAKE_ASM_NASM_COMPILER": "C:/Strawberry/c/bin/nasm.exe"
+      }
     }
   ],
   "buildPresets": [
@@ -53,6 +69,16 @@
       "name": "vs2022-release",
       "configurePreset": "vs2022",
       "configuration": "Release"
+    },
+    {
+      "name": "vs2017-release",
+      "configurePreset": "vs2017",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2017-debug",
+      "configurePreset": "vs2017",
+      "configuration": "Debug"
     }
   ],
   "testPresets": [
@@ -67,6 +93,22 @@
     {
       "name": "vs2008-debug",
       "configurePreset": "vs2008",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "vs2017-release",
+      "configurePreset": "vs2017",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "vs2017-debug",
+      "configurePreset": "vs2017",
       "configuration": "Debug",
       "output": {
         "outputOnFailure": true
