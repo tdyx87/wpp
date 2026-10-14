@@ -66,6 +66,30 @@ static const float SPIN_RANGE = 62.0f;
 static const float CRIT_CHANCE = 0.18f;
 static const float CRIT_MULT   = 2.0f;
 
+/* ---- the forge (gold sink) ---------------------------------------------
+   Base cost of each item and how much dearer it gets with every purchase.
+   A full 10-wave run yields about 1460 gold; the growth rates below are
+   tuned so a run buys roughly six or seven things in total and can never
+   have all of them -- that is what makes the gold a decision instead of a
+   counter.  Before this table existed, gold had no sink at all. */
+static const int   FORGE_BASE[FORGE_COUNT]   = { 60, 90, 30 };
+static const float FORGE_GROWTH[FORGE_COUNT] = { 1.55f, 1.60f, 1.30f };
+static const int   FORGE_TEMPER_ATK = 4;      /* +attack per temper        */
+static const float FORGE_PLATE_MUL  = 0.92f;  /* -8% damage taken each     */
+static const float FORGE_PLATE_MIN  = 0.45f;  /* armour floor              */
+static const int   FORGE_ELIXIR_HP  = 60;     /* instant heal              */
+
+/* ---- per-wave enemy scaling --------------------------------------------
+   The run used to get EASIER as it went.  The hero's attack grows about
+   3.4x across ten waves while a monster's stats never moved at all, so the
+   time to kill one monster fell from 3.0 s to 1.2 s and only the rising
+   head-count kept the waves long.  These two slopes put the threat back: on
+   wave 10 a monster carries 2.98x the hp and 1.90x the attack of its wave-1
+   self.  Both are exactly 1.0 on wave 1, so nothing spawned by a test on a
+   fresh World changes. */
+static const float WAVE_HP_SLOPE  = 0.22f;
+static const float WAVE_ATK_SLOPE = 0.10f;
+
 static inline int IsBlocking(int t)
 {
     return t == TILE_ROCK || t == TILE_WATER || t == TILE_TREE;
@@ -173,6 +197,7 @@ void World::Reset()
     m_hero.dashCdMul    = 1.0f;
     m_hero.spinCdMul    = 1.0f;
     m_hero.spinRangeAdd = 0.0f;
+    m_hero.dmgMul       = 1.0f;
     m_hero.lifesteal    = 0;
 
     memset(&m_st, 0, sizeof(m_st));
@@ -181,7 +206,9 @@ void World::Reset()
     m_st.pending = 0;
 
     for (int i = 0; i < PERK_COUNT; ++i) m_perkCount[i] = 0;
+    for (int i = 0; i < FORGE_COUNT; ++i) m_forgeCount[i] = 0;
     m_offer[0] = m_offer[1] = m_offer[2] = -1;
+    m_waveHpMul = m_waveAtkMul = 1.0f;
 
     buildMap();
     StartWave(1);
@@ -455,12 +482,21 @@ void World::SpawnMonster(int kind, float x, float y)
 
     const MonDef &d = MON_DEF[kind];
     memset(m, 0, sizeof(*m));
+
+    /* Wave scaling.  Both multipliers are exactly 1.0 on wave 1, so a test
+       that spawns straight into a fresh World still gets the raw MON_DEF
+       numbers; only waves 2+ are scaled up. */
+    int hp  = (int)((float)d.hp  * m_waveHpMul  + 0.5f);
+    int atk = (int)((float)d.atk * m_waveAtkMul + 0.5f);
+    if (hp  < 1) hp  = 1;
+    if (atk < 1) atk = 1;
+
     m->x      = x;
     m->y      = y;
     m->kind   = kind;
-    m->hp     = d.hp;
-    m->maxhp  = d.hp;
-    m->atk    = d.atk;
+    m->hp     = hp;
+    m->maxhp  = hp;
+    m->atk    = atk;
     m->speed  = d.speed;
     m->radius = d.radius;
     m->reach  = d.reach;
@@ -527,6 +563,14 @@ void World::StartWave(int wave)
     m_st.bannerWave      = wave;
     m_st.monstersThisWave = 0;
     m_st.killsThisWave    = 0;
+
+    /* Waves 2+ make the monsters themselves tougher, not just more numerous.
+       This is the threat curve the run was missing: without it the hero's
+       output outgrew the enemies every wave and the fights kept getting
+       lighter.  Wave 1 is left untouched (both factors 1.0). */
+    float n = (wave > 1) ? (float)(wave - 1) : 0.0f;
+    m_waveHpMul  = 1.0f + WAVE_HP_SLOPE  * n;
+    m_waveAtkMul = 1.0f + WAVE_ATK_SLOPE * n;
 
     int count = 4 + wave * 2;
     if (count > 34) count = 34;
@@ -1012,12 +1056,29 @@ void World::killMonster(int index)
     shake(m.kind == MON_BOSS ? 16 : 4);
 }
 
+/* Test seam.  Gold only ever arrives by walking over a drop, so without this
+   a test that wants to exercise the forge would have to simulate a whole
+   wave of pickups first.  The shell never calls it. */
+void World::AddGold(int amount)
+{
+    if (amount <= 0) return;
+    m_hero.gold += amount;
+}
+
 void World::DamageHero(int dmg)
 {
     Player &p = m_hero;
     if (!p.alive || p.invuln > 0) return;
 
     if (dmg < 1) dmg = 1;
+
+    /* armour bought at the forge shrinks what actually lands.  Rounded up, so
+       stacking plates can never reduce an incoming hit to nothing. */
+    if (p.dmgMul < 0.999f) {
+        dmg = (int)((float)dmg * p.dmgMul + 0.999f);
+        if (dmg < 1) dmg = 1;
+    }
+
     p.hp -= dmg;
     p.hitFlash = 14;
     p.invuln   = 40;
@@ -1102,6 +1163,147 @@ void World::applyPerk(int perk)
     m_st.levelFlash = 24;
     AddFx(FX_RING, p.x, p.y, 0, 0, COL_EXP);
     shake(3);
+}
+
+/* --------------------------------------------------------- cooldown sizes */
+
+int World::DashCdMax() const
+{
+    int t = (int)((float)DASH_CD * m_hero.dashCdMul + 0.5f);
+    return (t < 1) ? 1 : t;
+}
+
+int World::SpinCdMax() const
+{
+    int t = (int)((float)SPIN_CD * m_hero.spinCdMul + 0.5f);
+    return (t < 1) ? 1 : t;
+}
+
+/* ---------------------------------------------------------- the forge */
+
+/* What the NEXT one of `slot` costs: the base price compounded by the growth
+   rate once for every one already bought.  Deterministic, so the tests can
+   pin the exact numbers rather than a range. */
+int World::ForgePrice(int slot) const
+{
+    if (slot < 0 || slot >= FORGE_COUNT) return 0;
+    float price = (float)FORGE_BASE[slot];
+    for (int i = 0; i < m_forgeCount[slot]; ++i) price *= FORGE_GROWTH[slot];
+    int p = (int)(price + 0.5f);
+    return (p < 1) ? 1 : p;
+}
+
+int World::ForgeBought(int slot) const
+{
+    if (slot < 0 || slot >= FORGE_COUNT) return 0;
+    return m_forgeCount[slot];
+}
+
+void World::applyForge(int slot)
+{
+    Player &p = m_hero;
+    switch (slot) {
+    case FORGE_TEMPER:
+        p.atk += FORGE_TEMPER_ATK;
+        break;
+    case FORGE_PLATE:
+        p.dmgMul *= FORGE_PLATE_MUL;
+        if (p.dmgMul < FORGE_PLATE_MIN) p.dmgMul = FORGE_PLATE_MIN;
+        break;
+    case FORGE_ELIXIR:
+        p.hp += FORGE_ELIXIR_HP;
+        if (p.hp > p.maxhp) p.hp = p.maxhp;
+        break;
+    default:
+        break;
+    }
+}
+
+/* Buy one.  Only allowed while the level-up overlay is up: that is the only
+   pause the player ever gets, so the shop never interrupts a fight.  Returns
+   false -- touching nothing at all -- when the gold is short, which is what
+   lets the shell show the "cannot afford" state without a second query. */
+bool World::BuyForge(int slot)
+{
+    if (m_st.app != APP_LEVELUP) return false;
+    if (slot < 0 || slot >= FORGE_COUNT) return false;
+
+    int price = ForgePrice(slot);
+    if (m_hero.gold < price) return false;
+
+    m_hero.gold -= price;
+    ++m_forgeCount[slot];
+    applyForge(slot);
+    return true;
+}
+
+/* What a perk would do to the one number the player actually reads.  Fills
+   before/after with that stat and unit with 0 (a plain count) or 1 (a
+   percentage), so the card can print "34 -> 39" rather than only "attack
+   +5" -- without it the offer is a guess, because +5 attack means something
+   very different at level 2 and at level 9.  Returns false for a bad perk. */
+bool World::PerkPreview(int perk, int &before, int &after, int &unit) const
+{
+    const Player &p = m_hero;
+    before = 0;
+    after  = 0;
+    unit   = 0;
+
+    switch (perk) {
+    case PERK_BLADE:
+        before = p.atk;   after = p.atk + 5;                          break;
+    case PERK_IRON:
+        before = p.maxhp; after = p.maxhp + 26;                       break;
+
+    case PERK_BOOTS: {
+        float n = p.spdMul + 0.12f;
+        if (n > 1.8f) n = 1.8f;
+        before = (int)(p.spdMul * 100.0f + 0.5f);
+        after  = (int)(n        * 100.0f + 0.5f);
+        unit   = 1;
+        break;
+    }
+    case PERK_HASTE: {
+        float n = p.atkSpdMul - 0.10f;
+        if (n < 0.5f) n = 0.5f;
+        /* atkSpdMul scales the attack TIMER, so the speed the player feels is
+           its reciprocal -- print that, or "-10%" reads as a downgrade */
+        before = (int)(100.0f / p.atkSpdMul + 0.5f);
+        after  = (int)(100.0f / n           + 0.5f);
+        unit   = 1;
+        break;
+    }
+    case PERK_EDGE: {
+        float n = p.critAdd + 0.06f;
+        if (n > 0.70f) n = 0.70f;
+        before = (int)((CRIT_CHANCE + p.critAdd) * 100.0f + 0.5f);
+        after  = (int)((CRIT_CHANCE + n        ) * 100.0f + 0.5f);
+        unit   = 1;
+        break;
+    }
+    case PERK_FANG:
+        before = p.lifesteal; after = p.lifesteal + 2;                 break;
+
+    case PERK_WIND: {
+        float n = p.dashCdMul - 0.18f;
+        if (n < 0.4f) n = 0.4f;
+        before = (int)(p.dashCdMul * 100.0f + 0.5f);
+        after  = (int)(n           * 100.0f + 0.5f);
+        unit   = 1;
+        break;
+    }
+    case PERK_WHIRL: {
+        float n = p.spinCdMul - 0.15f;
+        if (n < 0.4f) n = 0.4f;
+        before = (int)(p.spinCdMul * 100.0f + 0.5f);
+        after  = (int)(n           * 100.0f + 0.5f);
+        unit   = 1;
+        break;
+    }
+    default:
+        return false;
+    }
+    return true;
 }
 
 /* Pick three distinct perks, weighting the less-taken ones so the offers feel

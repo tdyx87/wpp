@@ -181,8 +181,7 @@ static WBitmap *bakeShadow(int rx, int ry)
 /* Darkens the screen edge and leaves the middle exactly alone.  The camera
    keeps the hero near the centre, so this frames the action without hiding
    any of it, and it hides the flatness of the RGB565 terrain palette. */
-static WBitmap *bakeVignette(void)
-{
+static WBitmap *bakeVignette(void){
     WBitmap *b = new WBitmap();
     b->Create(FIELD_W, FIELD_H);
 
@@ -202,6 +201,38 @@ static WBitmap *bakeVignette(void)
             (*b)[y][x] = WPixel((int)(26.0f * t), (int)(32.0f * t), (int)(26.0f * t));
         }
 
+    return b;
+}
+
+/* A soft additive blob for the menu headline.  Same trick as bakeShadow: the
+   falloff has to live in the pixel values, because BLIT_ADDITIVE has no alpha
+   to work with and the library cannot scale a sprite.  The rim is pure black,
+   so adding it leaves the sky untouched there and the light only appears
+   where it is wanted. */
+static WBitmap *bakeGlow(int rx, int ry, unsigned long tint)
+{
+    WBitmap *b = new WBitmap();
+    const int w = 2 * rx + 2, h = 2 * ry + 2;
+    b->Create(w, h);
+
+    const int cx = w / 2, cy = h / 2;
+    const int tr = (int)((tint >> 16) & 0xFF);
+    const int tg = (int)((tint >> 8) & 0xFF);
+    const int tb = (int)(tint & 0xFF);
+
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            float dx = (float)(x - cx) / (float)rx;
+            float dy = (float)(y - cy) / (float)ry;
+            float d  = sqrtf(dx * dx + dy * dy);
+            float f  = 1.0f - d;
+            if (f < 0.0f) f = 0.0f;
+            f = f * f;                          /* soft, not linear, falloff */
+            (*b)[y][x] = WPixel((DWORD)(((int)(tr * f) << 16) |
+                                        ((int)(tg * f) << 8)  |
+                                         (int)(tb * f)));
+        }
+    b->SetPos(0, 0);
     return b;
 }
 
@@ -560,7 +591,10 @@ Atlas::Atlas() : m_ok(false)
     memset(m_ring,  0, sizeof(m_ring));
     m_title  = 0;
     m_titleW = 0;
+    memset(m_banner,  0, sizeof(m_banner));
+    memset(m_bannerW, 0, sizeof(m_bannerW));
     m_spark = 0;
+    m_glow  = 0;
     m_coin  = 0;
     m_potion = 0;
     memset(m_shadow, 0, sizeof(m_shadow));
@@ -590,7 +624,11 @@ void Atlas::Destroy()
     for (int i = 0; i < FACE_COUNT; ++i) { delete m_slash[i]; m_slash[i] = 0; }
     for (int i = 0; i < 2; ++i) { delete m_ring[i]; m_ring[i] = 0; }
     delete m_title;  m_title = 0;  m_titleW = 0;
+    for (int i = 0; i < 2; ++i) {
+        delete m_banner[i]; m_banner[i] = 0; m_bannerW[i] = 0;
+    }
     delete m_spark; m_spark = 0;
+    delete m_glow;  m_glow  = 0;
     delete m_coin;  m_coin = 0;
     delete m_potion; m_potion = 0;
     for (int i = 0; i < SHADOW_TIERS; ++i) { delete m_shadow[i]; m_shadow[i] = 0; }
@@ -653,6 +691,7 @@ bool Atlas::Build()
     m_ring[0] = bakeSprite(ringGrid, 44, 0, 0, 0, 0, COL_NOTHING, 0);
     m_ring[1] = bakeSprite(ringGrid, 128, 0, 0, 0, 0, COL_NOTHING, 0);
     m_spark   = bakeSprite(sparkGrid, 0, 0, 0, 0, 0, COL_NOTHING, 0);
+    m_glow    = bakeGlow(200, 92, 0x4A3A18);
     m_coin    = bakeSprite(coinGrid,  0, 0, 0, 0, 1, COL_MASK, 0);
     m_potion  = bakeSprite(potionGrid, 0, 0, 0, 0, 1, COL_MASK, 0);
 
@@ -730,8 +769,8 @@ bool Atlas::Build()
         COL_UI_TEXT,    /* J / 空格 / 左键 攻击 */
         COL_UI_TEXT,    /* K / Shift / 右键 冲刺 */
         COL_UI_TEXT,    /* L / Ctrl 旋风斩（消耗怒气） */
-        COL_UI_DIM,     /* M 地图 放大查看（暂停） */
-        COL_UI_DIM,     /* R 重来  Esc 退出 */
+        COL_UI_TEXT,     /* M 地图 放大查看（暂停） */
+        COL_UI_TEXT,     /* R 重来  Esc 退出 */
         /* perk name (gold: the card reads as the reward it is) ... */
         COL_BANNER,     /* 猛攻   */
         COL_BANNER,     /* 铁骨   */
@@ -751,7 +790,40 @@ bool Atlas::Build()
         COL_UI_DIM,     /* 冲刺冷却缩短      */
         COL_UI_DIM,     /* 旋风斩强化        */
         COL_UI_TEXT,    /* 按 Enter 确认     */
-        COL_UI_DIM      /* 上下键 / 1 2 切换 */
+        COL_UI_DIM,     /* 上下键 / 1 2 切换 */
+
+        /* ---- the forge (the gold sink) ---------------------------------- */
+        COL_BANNER,     /* 铁匠铺        */
+        COL_UI_TEXT,    /* 强化          */
+        COL_BANNER,     /* 淬火          */
+        COL_BANNER,     /* 护甲          */
+        COL_BANNER,     /* 药水          */
+        COL_UI_DIM,     /* 攻击 +4       */
+        COL_UI_DIM,     /* 受到伤害 -8%  */
+        COL_UI_DIM,     /* 立刻回复 60 生命 */
+        COL_UI_TEXT,    /* 购买          */
+        COL_UI_DIM,     /* 已购          */
+        COL_DMG_HURT,   /* 金币不足      */
+        COL_UI_DIM,     /* Tab / Q E 切换页签 */
+
+        /* ---- stat names, index-aligned with the perk enum --------------- */
+        COL_UI_DIM,     /* 攻击      */
+        COL_UI_DIM,     /* 生命上限  */
+        COL_UI_DIM,     /* 移动速度  */
+        COL_UI_DIM,     /* 攻击速度  */
+        COL_UI_DIM,     /* 暴击率    */
+        COL_UI_DIM,     /* 吸血      */
+        COL_UI_DIM,     /* 冲刺冷却  */
+        COL_UI_DIM,     /* 旋风冷却  */
+
+        /* ---- HUD extras -------------------------------------------------- */
+        COL_UI_DIM,     /* 冲刺      */
+        COL_UI_DIM,     /* 旋风      */
+        COL_DMG_HURT,   /* 敌军      */
+
+        /* ---- glyphs the renderer blits next to live numbers -------------- */
+        COL_UI_TEXT,    /* %         */
+        COL_UI_DIM      /* ->        */
     };
 
     for (int i = 0; i < WF_LABEL_COUNT; ++i)
@@ -774,11 +846,41 @@ bool Atlas::Build()
                   (unsigned long)COL_BANNER, 8);
     }
 
+    /* ---- run-summary headline (48 px) -----------------------------------
+       The one line that ends a run -- "阵亡" or "过关斩将！" -- has to land
+       with more weight than the 24 px label font can give it.  There is no
+       scaling in this library, so it gets its own bake. */
+    hf = CreateFontA(48, 0, 0, 0, FW_BOLD, 0, 0, 0, GB2312_CHARSET,
+                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                     DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, YAHEI);
+    if (!hf) { m_ok = false; return false; }
+    {
+        WFont fBig2;
+        fBig2.Create(hf, 16, 1024);
+        DeleteObject(hf);
+        bakeGlyph(m_banner[0], m_bannerW[0], fBig2, WF_LABEL[WF_LBL_DEAD],
+                  (unsigned long)COL_HP, 6);
+        bakeGlyph(m_banner[1], m_bannerW[1], fBig2, WF_LABEL[WF_LBL_WIN],
+                  (unsigned long)COL_BANNER, 6);
+    }
+
     m_ok = true;
     return true;
 }
 
 /* --------------------------------------------------------------- accessors */
+
+WBitmap *Atlas::BannerArt(int i) const
+{
+    if (i < 0 || i > 1) i = 0;
+    return m_banner[i];
+}
+
+int Atlas::BannerW(int i) const
+{
+    if (i < 0 || i > 1) i = 0;
+    return m_bannerW[i];
+}
 
 WBitmap *Atlas::Tile(int id) const
 {
@@ -859,6 +961,11 @@ WBitmap *Atlas::Ring(int i) const
 WBitmap *Atlas::Spark() const
 {
     return m_spark;
+}
+
+WBitmap *Atlas::Glow() const
+{
+    return m_glow;
 }
 
 WBitmap *Atlas::Coin() const

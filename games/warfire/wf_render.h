@@ -44,18 +44,27 @@ public:
     void DrawMap(WCanvas &canvas, const World &w, const Atlas &atlas);
 
     /* ---- product shell screens -------------------------------------------
-       Title menu, controls page, the level-up perk cards and the run summary.
+       Title menu, controls page, the level-up overlay and the run summary.
        They only touch WCanvas, so the tests render them headless exactly like
-       the in-game frame.  Draw() itself dispatches the perk cards and the run
+       the in-game frame.  Draw() itself dispatches the overlay and the run
        summary from World::App(), so the shell never has to know about them. */
     void DrawTitle(WCanvas &canvas, const World &w, const Atlas &atlas,
                    unsigned tick, int sel);
     void DrawHowto(WCanvas &canvas, const Atlas &atlas);
-    void DrawPerks(WCanvas &canvas, const World &w, const Atlas &atlas, int sel);
+
+    /* The level-up overlay has two pages sharing one frame: the perk cards
+       (tab 0) and the forge -- the gold sink -- on tab 1.  `sel` is the card
+       the cursor is on.  Keeping them in one overlay is deliberate: the
+       level-up pause is the only pause the player gets, so that is where the
+       gold has to be spendable. */
+    void DrawPerks(WCanvas &canvas, const World &w, const Atlas &atlas,
+                   int sel, int tab);
     void DrawOver (WCanvas &canvas, const World &w, const Atlas &atlas, int won);
 
-    /* Which perk card the shell's cursor is on (Draw reads it back). */
+    /* Which perk card the shell's cursor is on, and which page of the
+       overlay is up (Draw reads both back). */
     void SetPerkSel(int sel) { m_perkSel = sel; }
+    void SetOverlayTab(int tab) { m_tab = tab; }
 
     /* Number of draw calls produced by the last Draw(); used by the tests to
        prove the frame stays inside its budget. */
@@ -80,13 +89,60 @@ private:
     void drawBig      (WCanvas &cv, const World &w, const Atlas &atlas);
 
     /* shell screens (see the public block above) */
-    void drawBackdrop(WCanvas &cv, unsigned tick);
+    void drawBackdrop(WCanvas &cv, const Atlas &atlas, unsigned tick);
     void drawDiorama (WCanvas &cv, const Atlas &atlas);
-    void drawPanel   (WCanvas &cv, int x, int y, int w, int h,
-                      unsigned long edge, unsigned long bg);
     void drawClock   (WCanvas &cv, const Atlas &atlas, int seconds, int cx, int y);
     int  clockWidth  (const Atlas &atlas, int seconds) const;
     int  numWidth    (const Atlas &atlas, int set, int value) const;
+
+    /* The "freeze the world" wash under an overlay.
+       WBox::DrawFunc() only carries COPY / TRANS / BACK in its table -- the
+       additive and subtractive slots are NULL, so a WBox blitted with
+       BLIT_SUBTRACT silently draws nothing at all.  A WBitmap does support
+       every mode, so the dim has to be a bitmap: one full-screen sheet,
+       baked once, blitted with BLIT_SUBTRACT.  `passes` deepens it. */
+    void ensureDim();
+    void drawDim(WCanvas &cv, int passes);
+
+    /* ---- shared UI chrome ------------------------------------------------
+       One visual language for all five screens, kept in one place so they
+       cannot drift apart:
+
+         drawBevel()  a near-black keyline, a lit top inner edge and a shaded
+                      bottom inner edge over a flat fill.  The lit/shade pair
+                      is what makes a flat rectangle read as a solid surface
+                      instead of a coloured block.
+         drawBarEx()  a gradient tube: the fill is laid down one row at a
+                      time from a bright top to a saturated bottom, with a
+                      highlight row on top and faint ticks so a fraction can
+                      be read at a glance.
+         drawCool()   a cooldown that fills from the bottom, gold the moment
+                      it is ready -- no text needed. */
+    void drawBevel(WCanvas &cv, int x, int y, int w, int h,
+                   unsigned long fill, unsigned long key,
+                   unsigned long lit, unsigned long shade);
+    void drawBarEx(WCanvas &cv, int x, int y, int w, int h, int fillW,
+                   unsigned long top, unsigned long bot, int ticks);
+    void drawRule (WCanvas &cv, int x, int y, int w, unsigned long col);
+    void drawArrow(WCanvas &cv, const Atlas &atlas, int x, int y);
+    void drawCoin (WCanvas &cv, const Atlas &atlas, int value,
+                   int x, int y, int big);
+    void drawPips (WCanvas &cv, int cx, int y, int filled, int total,
+                   unsigned long col);
+    void drawTab  (WCanvas &cv, const Atlas &atlas, int x, int y, int w, int h,
+                   int labelId, int live);
+    void drawCool (WCanvas &cv, const Atlas &atlas, int x, int y, int w, int h,
+                   int labelId, int cd, int cdMax);
+    void drawCardBevel(WCanvas &cv, int x, int y, int w, int h,
+                       int live, int affordable, unsigned long accent);
+    /* A drop shadow: one offset rectangle of near-black, submitted AFTER the
+       panel it belongs to.  The overlap then disappears under the panel and
+       only the offset band shows -- which is what stops a dark panel from
+       melting into a dark, dimmed background. */
+    void drawShadow(WCanvas &cv, int x, int y, int w, int h, int off);
+    /* "攻击 34 -> 39" centred on cx; returns the width it used. */
+    int  drawStatRow(WCanvas &cv, const Atlas &atlas, const World &w,
+                     int perk, int cx, int y);
 
     void drawNumber(WCanvas &cv, const Atlas &atlas, int set, int value,
                     int sx, int sy, int centered);
@@ -102,6 +158,7 @@ private:
     Ent m_ents[MAX_MONSTERS + 1];
     int m_count;
     int m_perkSel;                  /* perk card the cursor is on           */
+    int m_tab;                      /* 0 = perk cards, 1 = the forge        */
     int m_ox, m_oy;             /* camera origin, shake already folded in */
     unsigned m_rng;
 
@@ -118,6 +175,9 @@ private:
     int      m_bigX, m_bigY;
     int      m_bigTile;              /* pixels per tile                 */
     int      m_bigHero;             /* hero tile the shading was baked for */
+
+    /* full-screen subtract sheet, built on first use (see drawDim) */
+    WBitmap *m_dim;
 };
 
 } /* namespace wf */

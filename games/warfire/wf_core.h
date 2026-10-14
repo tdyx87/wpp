@@ -100,6 +100,18 @@ enum Perk {
     PERK_COUNT
 };
 
+/* The forge -- the gold sink.  Unlike the perks these are not a random offer:
+   the same three items are always on the bench, and every purchase of one
+   makes the next one of that kind dearer.  A full run hands out roughly 1400
+   gold, which is deliberately not enough to buy everything, so the player has
+   to choose.  Before this existed `gold` was only ever accumulated. */
+enum ForgeItem {
+    FORGE_TEMPER = 0,   /* +attack, permanent for the run                   */
+    FORGE_PLATE,        /* -damage taken, multiplicative, floors at 45%      */
+    FORGE_ELIXIR,       /* heals on the spot (repeatable, no cap)            */
+    FORGE_COUNT
+};
+
 /* --------------------------------------------------------------- palette */
 enum {
     COL_GRASS_A  = 0x3E7A3A,
@@ -142,7 +154,31 @@ enum {
     COL_UI_EDGE  = 0x5A6A80,
     COL_UI_TEXT  = 0xE8F0FF,
     COL_UI_DIM   = 0x8A9AB0,
-    COL_BANNER   = 0xFFD23C
+    COL_BANNER   = 0xFFD23C,
+
+    /* --- UI surfaces ------------------------------------------------------
+       The flat-but-lit look the shell screens use: a near-black keyline, a
+       lit top inner edge and a shaded bottom inner edge over a dark navy
+       fill.  The lit/shade pair is what makes a flat rectangle read as a
+       solid surface rather than a coloured block.  Cyan is the secondary
+       accent, so gold is never the only colour on screen. */
+    COL_PANEL_BG    = 0x111726,
+    COL_PANEL_KEY   = 0x05070C,
+    COL_PANEL_LIT   = 0x3A4A66,
+    COL_PANEL_SHADE = 0x080C14,
+    COL_TROUGH_TOP  = 0x0B1018,
+    COL_TROUGH_BOT  = 0x05070C,
+    COL_CYAN        = 0x4FD8E8,
+    COL_CYAN_DIM    = 0x2A6E80,
+
+    /* bar gradients: a bright top edge fading into a saturated bottom reads
+       as a tube of light rather than a flat stripe of colour */
+    COL_HP_TOP      = 0xFF7A66,
+    COL_HP_BOT      = 0xA81A1A,
+    COL_MP_TOP      = 0x7FD8FF,
+    COL_MP_BOT      = 0x1A4E9E,
+    COL_EXP_TOP     = 0xFFE888,
+    COL_EXP_BOT     = 0xC08A10
 };
 
 /* ------------------------------------------------------------------ types */
@@ -225,6 +261,7 @@ struct Player {
     float dashCdMul;       /* dash cooldown multiplier (<1 = faster)       */
     float spinCdMul;       /* whirlwind cooldown multiplier                */
     float spinRangeAdd;    /* extra whirlwind reach in px                  */
+    float dmgMul;          /* damage-taken multiplier (<1 = armoured)      */
     int   lifesteal;       /* hp restored when a swing connects            */
 
     unsigned char alive;
@@ -288,6 +325,7 @@ public:
     void DamageMonster(int index, int dmg, int crit, float fromX, float fromY);
     void AddFx(int kind, float x, float y, int value, int crit, unsigned long color);
     void DamageHero(int dmg);
+    void AddGold(int amount);               /* test seam: fund the forge      */
     void StartWave(int wave);
     void AttackSweep();                     /* run the active-frame hit test   */
 
@@ -324,6 +362,33 @@ public:
          { return (perk >= 0 && perk < PERK_COUNT) ? m_perkCount[perk] : 0; }
     void ChoosePerk(int slot);          /* apply one of the 3 offers      */
 
+    /* --- the forge (the gold sink) ---------------------------------------
+       ForgePrice() is what the next purchase of that item costs, which grows
+       with every one already bought; BuyForge() deducts the gold and applies
+       the effect, and returns false (changing nothing) if the player cannot
+       afford it.  The shell reads all three to draw the shop page. */
+    int  ForgePrice (int slot) const;
+    int  ForgeBought(int slot) const;
+    bool BuyForge   (int slot);
+
+    /* --- what a perk would actually do to the hero's numbers -------------
+       Fills before/after with the one stat the perk moves, and unit with 0
+       (a plain count) or 1 (a percentage), so the card can print "34 -> 39"
+       instead of only "attack +5".  Without this the offer is a guess: the
+       player cannot tell whether +5 attack is a lot at their current level.
+       Returns false for an unknown perk. */
+    bool PerkPreview(int perk, int &before, int &after, int &unit) const;
+
+    /* How much enemy hp / attack a wave is scaled by (1.0 on wave 1).  The
+       HUD shows it so "the enemies got tougher" is visible, not just felt. */
+    float WaveHpMul()  const { return m_waveHpMul; }
+    float WaveAtkMul() const { return m_waveAtkMul; }
+
+    /* Cooldown denominators (already perk-adjusted), so the HUD can draw a
+       real charge indicator without duplicating the tuning constants. */
+    int DashCdMax() const;
+    int SpinCdMax() const;
+
     int  BestWave()  const { return m_bestWave; }
     int  BestKills() const { return m_bestKills; }
     void EnableSave(int on) { m_save = on ? 1 : 0; }
@@ -333,6 +398,7 @@ public:
 private:
     void updateFlow();
     void applyPerk(int perk);
+    void applyForge(int slot);
     void rollOffers();
     void endRun();
     void buildMap();
@@ -377,8 +443,14 @@ private:
     /* progression */
     int      m_offer[3];               /* the 3 perks on offer right now   */
     int      m_perkCount[PERK_COUNT];  /* how many times each was taken    */
+    int      m_forgeCount[FORGE_COUNT];/* how many times each was bought   */
     int      m_bestWave, m_bestKills; /* high score (loaded / saved)      */
     int      m_save;                  /* 1 = actually touch the save file */
+
+    /* Per-wave enemy scaling.  Recomputed in StartWave() and applied in
+       SpawnMonster(), so a monster spawned straight from a test on wave 1 is
+       byte-for-byte what it always was (both multipliers are exactly 1.0). */
+    float    m_waveHpMul, m_waveAtkMul;
 };
 
 /* xorshift32 -- deterministic, so the tests can rely on the exact sequence. */

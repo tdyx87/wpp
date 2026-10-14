@@ -788,22 +788,39 @@ static void test_render_layers(void)
 {
     printf("[17] render: layer order\n");
 
-    /* the HUD is submitted first, so it wins over anything under it */
     World w;
     Renderer r;
     WBitmap out(FIELD_W, FIELD_H);
     renderFrame(r, w, out);
 
-    int hudPixels = 0;
-    for (int y = 0; y < 60; ++y)
-        for (int x = 0; x < 240; ++x) {
-            DWORD p = (DWORD)out[y][x];
-            unsigned r0 = (p >> 16) & 0xFF, g0 = (p >> 8) & 0xFF, b0 = p & 0xFF;
-            /* the HUD text is near-white / gold on dark panel colours */
-            if (r0 > 200 && g0 > 200 && b0 > 200) ++hudPixels;
-        }
-    printf("      HUD pixels in the top-left corner: %d\n", hudPixels);
-    check(hudPixels > 40, "the HUD is drawn on top of the terrain");
+    /* The HUD is submitted first, so it wins over anything under it.  Two
+       things are worth asserting here:
+         - the cluster must not be one flat colour.  That is the regression
+           this check caught: a panel whose body fill was submitted before its
+           own text painted straight over it, and the whole cluster came out
+           as a blank rectangle (measured: one colour, 17880 px of it);
+         - and the text has to actually be bright, i.e. legible on the dark
+           panel, which the luminance sum below captures without hard-coding
+           any particular palette entry. */
+    int hudColors = 0, hudText = 0;
+    {
+        DWORD seen[512];
+        for (int y = 10; y < 74; ++y)
+            for (int x = 12; x < 312; ++x) {
+                DWORD pv = (DWORD)out[y][x];
+                int k = 0;
+                while (k < hudColors && seen[k] != pv) ++k;
+                if (k == hudColors && hudColors < 512) seen[hudColors++] = pv;
+
+                unsigned r0 = (pv >> 16) & 0xFF, g0 = (pv >> 8) & 0xFF,
+                         b0 = pv & 0xFF;
+                if (r0 + g0 + b0 > 520) ++hudText;
+            }
+    }
+    printf("      level cluster: %d distinct colours, %d bright pixels\n",
+           hudColors, hudText);
+    check(hudColors > 12, "the HUD panel does not swallow its own contents");
+    check(hudText > 60, "the HUD text is drawn on top of the terrain");
 
     /* a monster standing north of the hero is further away, so the hero wins
        the overlap: larger y is submitted first and lands on top */
@@ -1322,17 +1339,17 @@ static void test_progression(void)
  *  that is what proves the cursor moves.
  * ------------------------------------------------------------------------ */
 static void renderInto(WBitmap &out, Renderer &r, int which,
-                       const World &w, int arg, int *items)
+                       const World &w, int arg, int *items, int tab = 0)
 {
     WCanvas cv(FIELD_W, FIELD_H);
     switch (which) {
     case 0: r.DrawTitle(cv, w, *g_atlas, 123u, arg); break;
     case 1: r.DrawHowto(cv, *g_atlas);               break;
     default:
-        /* the perk overlay is meant to sit on top of a frozen world, so the
-           world sheet goes down LAST (submitted last = bottom), exactly the
-           order Draw() uses */
-        r.DrawPerks(cv, w, *g_atlas, arg);
+        /* the level-up overlay is meant to sit on top of a frozen world, so
+           the world sheet goes down LAST (submitted last = bottom), exactly
+           the order Draw() uses */
+        r.DrawPerks(cv, w, *g_atlas, arg, tab);
         cv.SetPos(0, 0);
         cv.Draw(WBox(FIELD_W, FIELD_H, WPixel((DWORD)COL_GRASS_A)), BLIT_COPY);
         break;
@@ -1342,6 +1359,14 @@ static void renderInto(WBitmap &out, Renderer &r, int which,
     cv.SetPos(0, 0);
     out.Clear(WPixel(0, 0, 0));
     cv.BlitTo(out);
+}
+
+/* Sum of the three channels at one pixel; used to prove that a wash actually
+   darkened something rather than just being submitted. */
+static int lumAt(const WBitmap &img, int x, int y)
+{
+    DWORD pv = (DWORD)img[y][x];
+    return (int)((pv >> 16) & 0xFF) + (int)((pv >> 8) & 0xFF) + (int)(pv & 0xFF);
 }
 
 /* counts pixels whose RGB is "mostly this colour" */
@@ -1421,6 +1446,29 @@ static void test_render_shell(void)
         printf("      howto: %d blank samples\n", blank);
         check(blank == 0, "the controls page fills the viewport");
         if (const char *p = getenv("WF_DUMP_HOWTO")) dumpFrame(a, p);
+
+        /* Count the horizontal bands of bright text inside the panel.  Six
+           control lines must all be legible; a zebra band submitted in front
+           of its own row used to blank three of them, and nothing else here
+           noticed.  Counting bands rather than sampling fixed coordinates
+           keeps this independent of the exact row positions. */
+        int bands = 0, inBand = 0;
+        for (int y = 124; y < 484; ++y) {
+            int bright = 0;
+            for (int x = 0; x < FIELD_W; ++x) {
+                DWORD pv = (DWORD)a[y][x];
+                unsigned r0 = (pv >> 16) & 0xFF, g0 = (pv >> 8) & 0xFF,
+                         b0 = pv & 0xFF;
+                if (r0 + g0 + b0 > 520) ++bright;
+            }
+            if (bright >= 8) {
+                if (!inBand) { ++bands; inBand = 1; }
+            } else {
+                inBand = 0;
+            }
+        }
+        printf("      howto: %d lines of text in the panel\n", bands);
+        check(bands >= 6, "all six control lines are legible");
     }
 
     /* ---- perk cards ----------------------------------------------------- */
@@ -1434,6 +1482,12 @@ static void test_render_shell(void)
             }
     }
     check(lp.App() == APP_LEVELUP, "a level flips the world into the perk state");
+
+    /* a player who has been fighting for a while arrives at the level-up with
+       gold in hand -- and the forge page colours its cards by whether the
+       price is affordable, so without this every card would render as the
+       "cannot pay" variant and the accent colour would never be exercised */
+    lp.AddGold(300);
 
     {
         Renderer r;
@@ -1450,6 +1504,79 @@ static void test_render_shell(void)
     if (const char *p = getenv("WF_DUMP_PERKS")) dumpFrame(a, p);
     printf("      perks: %d samples differ between card 0 and card 2\n", cards);
     check(cards > 60, "the selected perk card is highlighted");
+
+    /* ---- the dim actually dims ------------------------------------------ *
+     * Regression test for a real bug: WBox::DrawFunc() looks its style up in
+     * a six-entry table whose additive and subtractive slots are NULL, so
+     * `Draw(WBox(...), BLIT_SUBTRACT)` returns 0 and draws NOTHING.  Every
+     * "freeze the world behind the overlay" wash used to be one of those, and
+     * the paused screens looked fully lit.  Compare an empty part of the
+     * overlay against the same spot with no overlay at all.              */
+    {
+        WBitmap g(FIELD_W, FIELD_H), ov(FIELD_W, FIELD_H);
+        {
+            WCanvas cv(FIELD_W, FIELD_H);
+            cv.SetPos(0, 0);
+            cv.Draw(WBox(FIELD_W, FIELD_H, WPixel((DWORD)COL_GRASS_A)), BLIT_COPY);
+            cv.Update();
+            cv.SetPos(0, 0);
+            g.Clear(WPixel(0, 0, 0));
+            cv.BlitTo(g);
+        }
+        {
+            Renderer r;
+            renderInto(ov, r, 2, lp, 0, 0, 0);
+        }
+        int lg = lumAt(g, 400, 560);
+        int lo = lumAt(ov, 400, 560);
+        printf("      perk overlay: bare grass luminance %d, behind the overlay %d\n",
+               lg, lo);
+        check(lo < lg - 20, "the frozen world is really dimmed behind the overlay");
+    }
+
+    /* ---- the forge page -------------------------------------------------- */
+    {
+        Renderer r;
+        int items = 0;
+        renderInto(a, r, 2, lp, 0, &items, 1);
+        printf("      forge: %d draw calls\n", items);
+        check(items > 20, "the forge page submits its layers");
+
+        int blank = 0;
+        for (int y = 0; y < FIELD_H; y += 7)
+            for (int x = 0; x < FIELD_W; x += 7)
+                if ((DWORD)a[y][x] == 0) ++blank;
+        check(blank == 0, "the forge page fills the viewport");
+
+        int cyan = countColor(a, 0x4F, 0xD8, 0xE8, 40);
+        printf("      forge: %d cyan samples\n", cyan);
+        check(cyan > 20, "the forge items are colour-coded");
+
+        if (const char *p = getenv("WF_DUMP_FORGE")) dumpFrame(a, p);
+    }
+    {
+        Renderer r;
+        /* b is the PERK page this time: comparing the forge against itself
+           would prove nothing, which is exactly the bug this check found */
+        renderInto(b, r, 2, lp, 0, 0, 0);
+    }
+    int tabs = countDiff(a, b);
+    printf("      forge: %d samples differ from the perk page\n", tabs);
+    check(tabs > 200, "the two overlay pages are visibly different");
+
+    /* moving the cursor on the forge page has to change something too */
+    {
+        Renderer r;
+        renderInto(b, r, 2, lp, 2, 0, 1);
+    }
+    {
+        WBitmap c(FIELD_W, FIELD_H);
+        Renderer r;
+        renderInto(c, r, 2, lp, 0, 0, 1);
+        int movedForge = countDiff(c, b);
+        printf("      forge: %d samples differ between item 0 and item 2\n", movedForge);
+        check(movedForge > 40, "the forge cursor moves");
+    }
 
     /* ---- run summary (dead) --------------------------------------------- */
     World dp;
@@ -1470,6 +1597,17 @@ static void test_render_shell(void)
         int red = countColor(a, 0xE0, 0x3C, 0x3C, 30);
         printf("      summary: %d red samples\n", red);
         check(red > 20, "the defeat banner is drawn");
+
+        /* The HUD stands down while the summary is up.  It used to be drawn
+           first (so on top of the dim) and its bottom-right charge boxes ran
+           straight through the R/Back hints.  Sample the bottom-left vitals
+           region, which nothing on this screen paints. */
+        int hudPanel = 0;
+        for (int y = 500; y < 585; ++y)
+            for (int x = 12; x < 312; ++x)
+                if ((DWORD)a[y][x] == (DWORD)COL_PANEL_BG) ++hudPanel;
+        printf("      summary: %d HUD panel pixels in the bottom-left\n", hudPanel);
+        check(hudPanel == 0, "the HUD stands down while the summary is up");
         if (const char *p = getenv("WF_DUMP_OVER")) dumpFrame(a, p);
     }
 
@@ -1503,6 +1641,221 @@ static void test_render_shell(void)
 }
 
 /* ---------------------------------------------------------------------- */
+/* --------------------------------------------------------------- [27] */
+/* The two systems the product pass added, pinned against their tuning tables
+   rather than against themselves: the per-wave threat curve, and the forge
+   that finally gives a run's gold somewhere to go. */
+/* --------------------------------------------------------------- [27] */
+/* The two systems the product pass added, pinned against their tuning tables
+   rather than against themselves: the per-wave threat curve, and the forge
+   that finally gives a run's gold somewhere to go. */
+
+/* A fresh world parked in the level-up pause with gold in hand.  The forge
+   only opens during that pause, so every forge check starts here. */
+static void openForge(World &w, int gold)
+{
+    for (int n = 0; n < 5; ++n) {
+        w.SpawnMonster(MON_GRUNT, w.Hero().x, w.Hero().y + 40.0f);
+        for (int i = 0; i < MAX_MONSTERS; ++i)
+            if (w.Monsters()[i].alive) {
+                w.DamageMonster(i, 100000, 0, w.Hero().x, w.Hero().y);
+                break;
+            }
+    }
+    w.AddGold(gold);
+}
+
+static void test_curves_and_forge(void)
+{
+    printf("[27] tuning: wave curve, forge, perk preview\n");
+
+    /* ---- the threat curve ---------------------------------------------- *
+     * Wave 1 has to stay at exactly 1.0.  Every SpawnMonster() assertion
+     * above is written against the raw MON_DEF numbers, so a multiplier that
+     * crept onto wave 1 would quietly rewrite all of them. */
+    {
+        World w;
+        w.StartWave(1);
+        check(w.WaveHpMul() > 0.999f && w.WaveHpMul() < 1.001f,
+              "wave 1 is not scaled at all");
+        check(w.WaveAtkMul() > 0.999f && w.WaveAtkMul() < 1.001f,
+              "and neither is its attack");
+
+        w.StartWave(10);
+        printf("      wave 10: hp x%.3f, atk x%.3f\n", w.WaveHpMul(), w.WaveAtkMul());
+        check(w.WaveHpMul() > 2.90f && w.WaveHpMul() < 3.06f,
+              "wave 10 carries about 3x the hp of wave 1");
+        check(w.WaveAtkMul() > 1.85f && w.WaveAtkMul() < 1.95f,
+              "and about 1.9x the attack");
+        check(w.WaveHpMul() > w.WaveAtkMul(),
+              "hp outgrows attack, so the curve asks for damage, not just care");
+    }
+
+    /* the multiplier has to reach the monsters, not just the getter */
+    {
+        World a, b;
+        a.StartWave(1);
+        b.StartWave(10);
+        a.SpawnMonster(MON_GRUNT, a.Hero().x, a.Hero().y + 60.0f);
+        b.SpawnMonster(MON_GRUNT, b.Hero().x, b.Hero().y + 60.0f);
+
+        int ha = 0, hb = 0, aa = 0, ab = 0;
+        for (int i = 0; i < MAX_MONSTERS; ++i) {
+            if (a.Monsters()[i].alive && a.Monsters()[i].kind == MON_GRUNT) {
+                ha = a.Monsters()[i].hp; aa = a.Monsters()[i].atk;
+            }
+            if (b.Monsters()[i].alive && b.Monsters()[i].kind == MON_GRUNT) {
+                hb = b.Monsters()[i].hp; ab = b.Monsters()[i].atk;
+            }
+        }
+        printf("      grunt: wave 1 %d hp / %d atk, wave 10 %d hp / %d atk\n",
+               ha, aa, hb, ab);
+        check(ha > 0 && hb > ha * 2, "a wave 10 grunt really is tougher");
+        check(ab > aa, "and hits harder");
+    }
+
+    /* ---- prices, and the two refusals ----------------------------------- */
+    {
+        World w;
+        check(w.ForgePrice(FORGE_TEMPER) == 60, "the temper starts at 60 gold");
+        check(w.ForgePrice(FORGE_PLATE)  == 90, "the plate starts at 90 gold");
+        check(w.ForgePrice(FORGE_ELIXIR) == 30, "the elixir starts at 30 gold");
+        check(w.ForgeBought(FORGE_TEMPER) == 0, "nothing is owned yet");
+
+        check(!w.BuyForge(FORGE_ELIXIR), "the forge refuses to sell mid-fight");
+        check(w.ForgeBought(FORGE_ELIXIR) == 0, "and buys nothing while refusing");
+
+        openForge(w, 0);
+        check(w.App() == APP_LEVELUP, "a level opens the forge");
+
+        int atk0 = w.Hero().atk;
+        check(!w.BuyForge(FORGE_TEMPER), "no gold, no temper");
+        check(w.Hero().atk == atk0, "and the refusal left the attack alone");
+        check(w.ForgeBought(FORGE_TEMPER) == 0, "with nothing recorded");
+
+        w.AddGold(1000);
+        int gold0 = w.Hero().gold;
+        check(w.BuyForge(FORGE_TEMPER), "1000 gold buys the temper");
+        check(w.Hero().atk == atk0 + 4, "the temper adds 4 attack");
+        check(w.Hero().gold == gold0 - 60, "and takes exactly 60 gold");
+        check(w.ForgeBought(FORGE_TEMPER) == 1, "the purchase is recorded");
+        check(w.App() == APP_LEVELUP, "buying does not close the shop");
+        printf("      temper: atk %d -> %d, gold %d -> %d, next costs %d\n",
+               atk0, w.Hero().atk, gold0, w.Hero().gold, w.ForgePrice(FORGE_TEMPER));
+        check(w.ForgePrice(FORGE_TEMPER) > 60, "the next temper costs more");
+
+        check(w.DashCdMax() >= 1 && w.SpinCdMax() >= 1,
+              "both cooldown denominators are usable");
+        check(w.DashCdMax() <= 600 && w.SpinCdMax() <= 600,
+              "and neither is an absurd number of frames");
+    }
+
+    /* ---- the plate: multiplicative armour, with a floor ----------------- *
+     * One hit per world.  DamageHero() grants 40 frames of invulnerability,
+     * so a second hit on the same hero would silently measure nothing. */
+    {
+        World bare, plated;
+        openForge(bare, 0);
+        openForge(plated, 1000);
+
+        int hp0 = bare.Hero().hp;
+        bare.DamageHero(20);
+        int plain = hp0 - bare.Hero().hp;
+        check(plain == 20, "an unarmoured hit lands for its full 20");
+
+        check(plated.BuyForge(FORGE_PLATE), "buy a plate");
+        check(plated.Hero().dmgMul < 0.999f, "the plate makes the hero take less");
+
+        hp0 = plated.Hero().hp;
+        plated.DamageHero(20);
+        int armoured = hp0 - plated.Hero().hp;
+        printf("      20 damage: %d bare, %d with one plate\n", plain, armoured);
+        check(armoured < plain, "and the next hit really does land softer");
+        check(armoured == 19, "one plate takes 8% off, rounded up");
+
+        /* 13 plates would be 0.92^13 = 0.35 without the floor */
+        plated.AddGold(500000);
+        for (int i = 0; i < 12; ++i) plated.BuyForge(FORGE_PLATE);
+        printf("      after 13 plates: damage taken x%.3f\n", plated.Hero().dmgMul);
+        check(plated.ForgeBought(FORGE_PLATE) == 13, "thirteen plates are owned");
+        check(plated.Hero().dmgMul > 0.449f && plated.Hero().dmgMul < 0.451f,
+              "stacking plates bottoms out at 45%");
+    }
+
+    /* ---- the elixir: repeatable, heals 60, never overheals --------------- */
+    {
+        World e;
+        openForge(e, 1000);
+        int maxhp = e.Hero().maxhp;
+
+        e.DamageHero(80);
+        int hurt = e.Hero().hp;
+        check(hurt == maxhp - 80, "the hero is hurt before the elixir");
+
+        check(e.BuyForge(FORGE_ELIXIR), "buy an elixir");
+        printf("      elixir: hp %d -> %d (max %d)\n", hurt, e.Hero().hp, maxhp);
+        check(e.Hero().hp == hurt + 60, "it heals exactly 60");
+        check(e.Hero().hp <= maxhp, "and never overheals");
+
+        check(e.BuyForge(FORGE_ELIXIR), "a second elixir is allowed");
+        check(e.Hero().hp == maxhp, "and the second one tops the hero up");
+        check(e.ForgeBought(FORGE_ELIXIR) == 2, "both are recorded");
+        printf("      elixir price after two: %d\n", e.ForgePrice(FORGE_ELIXIR));
+        check(e.ForgePrice(FORGE_ELIXIR) > 30, "and the elixir gets dearer too");
+    }
+
+    /* ---- the perk preview ----------------------------------------------- *
+     * This is what lets a card print "34 -> 39" instead of only "+5 attack".
+     * The interesting case is HASTE: atkSpdMul scales the attack TIMER, so
+     * printing the raw multiplier would show the number going DOWN for an
+     * upgrade.  It prints the reciprocal instead. */
+    {
+        int before = 0, after = 0, unit = 0;
+        World p;
+
+        check(!p.PerkPreview(-1, before, after, unit), "a bogus perk has no preview");
+        check(!p.PerkPreview(PERK_COUNT, before, after, unit),
+              "and neither does one past the end");
+
+        int moved = 0;
+        for (int k = 0; k < PERK_COUNT; ++k) {
+            before = after = unit = -1;
+            if (!p.PerkPreview(k, before, after, unit)) {
+                check(false, "every perk has a preview");
+                continue;
+            }
+            if (after != before && (unit == 0 || unit == 1)) ++moved;
+            else printf("      perk %d previews %d -> %d (unit %d)\n",
+                        k, before, after, unit);
+        }
+        printf("      %d of %d perks preview a real change\n", moved, PERK_COUNT);
+        check(moved == PERK_COUNT, "every perk moves the number it previews");
+
+        p.PerkPreview(PERK_BLADE, before, after, unit);
+        printf("      blade: %d -> %d (unit %d)\n", before, after, unit);
+        check(after - before == 5, "the blade previews +5 attack");
+        check(unit == 0, "as a plain count");
+
+        p.PerkPreview(PERK_IRON, before, after, unit);
+        check(after - before == 26, "the iron previews +26 max hp");
+
+        p.PerkPreview(PERK_EDGE, before, after, unit);
+        check(after - before == 6, "the edge previews +6% crit");
+
+        p.PerkPreview(PERK_HASTE, before, after, unit);
+        printf("      haste: %d%% -> %d%% attack speed\n", before, after);
+        check(unit == 1, "haste previews a percentage");
+        check(after > before, "and it reads as an upgrade, not as a downgrade");
+
+        p.PerkPreview(PERK_BOOTS, before, after, unit);
+        check(after > before, "so does the boots' movement");
+
+        p.PerkPreview(PERK_WIND, before, after, unit);
+        check(after < before, "the wind shortens the dash cooldown");
+    }
+}
+
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -1545,6 +1898,7 @@ int main(void)
     test_timer_fidelity();
     test_canvas_dirty_scroll();
     test_reachable_pathing();
+    test_curves_and_forge();
 
     printf("\n=== RESULT: %d passed, %d failed ===\n", g_pass, g_fail);
     return (g_fail == 0) ? 0 : 1;

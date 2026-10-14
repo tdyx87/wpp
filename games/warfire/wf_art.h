@@ -67,7 +67,16 @@ public:
     WBitmap *Ring(int i) const;         /* 0 = small, 1 = large            */
     WBitmap *TitleArt() const { return m_title; }   /* 72 px menu headline */
     int      TitleW()   const { return m_titleW; }
+    /* The run-summary headline at 48 px: 0 = WF_LBL_DEAD, 1 = WF_LBL_WIN.
+       The 24 px label font is too small to carry the one line that ends a
+       run, and scaling does not exist in this library, so it is baked. */
+    WBitmap *BannerArt(int i) const;
+    int      BannerW(int i) const;
     WBitmap *Spark() const;             /* a 3x3 additive dot              */
+    /* A soft additive blob, used behind the menu headline.  The falloff is
+       carried in the pixel values because BLIT_ADDITIVE has no alpha; the rim
+       is pure black, so adding it leaves the sky untouched there. */
+    WBitmap *Glow() const;
     WBitmap *Coin() const;
     WBitmap *Potion() const;
     WBitmap *Shadow(int tier) const;    /* soft blob under an actor       */
@@ -89,7 +98,10 @@ private:
     WBitmap *m_ring[2];
     WBitmap *m_title;
     int      m_titleW;
+    WBitmap *m_banner[2];           /* 0 = dead, 1 = win                    */
+    int      m_bannerW[2];
     WBitmap *m_spark;
+    WBitmap *m_glow;
     WBitmap *m_coin;
     WBitmap *m_potion;
     WBitmap *m_shadow[SHADOW_TIERS];

@@ -27,7 +27,8 @@
  *                 K / Shift / RMB dash
  *                 L / Ctrl        whirlwind
  *                 M               enlarged full map (pauses while open)
- *      level up   1/2/3 pick, or Left/Right + Enter/J
+ *      level up   Tab / Q / E     switch between the cards and the forge
+ *                 1/2/3 or arrows pick, Enter/J confirm (picks, or buys)
  *      summary    R restart, Enter/J back to the title, Esc quits
  * ===========================================================================
  */
@@ -77,6 +78,7 @@ private:
         ACT_UP = 0, ACT_DOWN, ACT_LEFT, ACT_RIGHT,
         ACT_OK,           /* Enter / J / Space */
         ACT_ONE, ACT_TWO, ACT_THREE,
+        ACT_TAB,          /* Tab / Q / E, in the level-up overlay */
         ACT_RESTART,      /* R */
         ACT_BACK,         /* Esc, in the menus */
         ACT_COUNT
@@ -85,6 +87,7 @@ private:
     void PollKeys();
     int  ActionDown(int act, int vk1, int vk2 = 0, int vk3 = 0,
                     int vk4 = 0, int vk5 = 0);
+    void primeOverlay();
     void stepTitle();
     void stepHowto();
     void stepGame();
@@ -104,7 +107,9 @@ private:
 
     int       m_screen;              /* SCR_TITLE / SCR_HOWTO / SCR_GAME */
     int       m_menuSel;             /* title cursor                    */
-    int       m_perkSel;             /* perk card cursor                */
+    int       m_perkSel;             /* card cursor in the overlay      */
+    int       m_tab;                 /* 0 = perk cards, 1 = the forge   */
+    int       m_prevApp;             /* AppState last frame (see prime) */
     unsigned  m_tick;                /* frame counter, drives the menu  */
     int       m_prevAct[ACT_COUNT];  /* per-action edge memory          */
 };
@@ -127,6 +132,8 @@ Warfire::Warfire(HINSTANCE hInst)
       m_screen(SCR_TITLE),
       m_menuSel(0),
       m_perkSel(0),
+      m_tab(0),
+      m_prevApp(-1),
       m_tick(0)
 {
     for (int i = 0; i < ACT_COUNT; ++i) m_prevAct[i] = 0;
@@ -260,6 +267,8 @@ void Warfire::startRun()
     m_prevMap   = 0;
     m_mapOpen   = 0;
     m_perkSel   = 0;
+    m_tab       = 0;
+    m_prevApp   = -1;                       /* so the first frame primes     */
     m_screen    = SCR_GAME;
 }
 
@@ -272,25 +281,70 @@ void Warfire::stepHowto()
 
 /* ------------------------------------------------------------- the run */
 
+/* Prime every overlay action to its CURRENT key state.
+   J is both "attack" and "confirm", so without this a player who dies or
+   levels up mid-swing would have the frame they were already holding the key
+   on count as a fresh press -- instantly buying something, or skipping the
+   run summary they never got to read.  Priming makes a held key produce no
+   edge on the frame the overlay opens, so it has to be released and pressed
+   again. */
+void Warfire::primeOverlay()
+{
+    m_prevAct[ACT_OK]      = keyDown(VK_RETURN) || keyDown('J') || keyDown(VK_SPACE);
+    m_prevAct[ACT_ONE]     = keyDown('1');
+    m_prevAct[ACT_TWO]     = keyDown('2');
+    m_prevAct[ACT_THREE]   = keyDown('3');
+    m_prevAct[ACT_TAB]     = keyDown(VK_TAB) || keyDown('Q') || keyDown('E');
+    m_prevAct[ACT_LEFT]    = keyDown(VK_LEFT);
+    m_prevAct[ACT_RIGHT]   = keyDown(VK_RIGHT);
+    m_prevAct[ACT_UP]      = keyDown(VK_UP);
+    m_prevAct[ACT_DOWN]    = keyDown(VK_DOWN);
+    m_prevAct[ACT_RESTART] = keyDown('R');
+}
+
 void Warfire::stepGame()
 {
     int app = m_world.App();
 
-    /* ---- level up: frozen, three cards, one pick ------------------------ */
+    if (app != m_prevApp) {
+        primeOverlay();
+        m_prevApp = app;
+    }
+
+    /* ---- level up: frozen, three cards (or the forge), one pick --------- */
     if (app == APP_LEVELUP) {
         m_mapOpen = 0;                      /* the cards outrank the map     */
+
+        if (ActionDown(ACT_TAB, VK_TAB, 'Q', 'E')) m_tab ^= 1;
+
         if (ActionDown(ACT_LEFT,  VK_LEFT))  { if (--m_perkSel < 0) m_perkSel = 2; }
         if (ActionDown(ACT_RIGHT, VK_RIGHT)) { if (++m_perkSel > 2) m_perkSel = 0; }
         if (ActionDown(ACT_UP,    VK_UP))    m_perkSel = 0;
         if (ActionDown(ACT_DOWN,  VK_DOWN))  m_perkSel = 2;
-        if (ActionDown(ACT_ONE,   '1')) { m_world.ChoosePerk(0); m_perkSel = 0; }
-        if (ActionDown(ACT_TWO,   '2')) { m_world.ChoosePerk(1); m_perkSel = 1; }
-        if (ActionDown(ACT_THREE, '3')) { m_world.ChoosePerk(2); m_perkSel = 2; }
-        if (ActionDown(ACT_OK, VK_RETURN, 'J', VK_SPACE)) {
-            m_world.ChoosePerk(m_perkSel);
-            m_perkSel = 0;
+
+        int pick = -1;
+        if (ActionDown(ACT_ONE,   '1')) pick = 0;
+        if (ActionDown(ACT_TWO,   '2')) pick = 1;
+        if (ActionDown(ACT_THREE, '3')) pick = 2;
+        if (ActionDown(ACT_OK, VK_RETURN, 'J', VK_SPACE)) pick = m_perkSel;
+
+        if (pick >= 0) {
+            m_perkSel = pick;
+            if (m_tab == 0) {
+                m_world.ChoosePerk(pick);   /* spends the pick, may close    */
+                if (m_world.App() != APP_LEVELUP) {
+                    m_perkSel = 0;
+                    m_tab     = 0;
+                }
+            } else {
+                /* the forge stays open: several things can be bought, and the
+                   perk pick is still owed afterwards */
+                m_world.BuyForge(pick);
+            }
         }
+
         m_renderer.SetPerkSel(m_perkSel);
+        m_renderer.SetOverlayTab(m_tab);
         return;                             /* the world stays frozen        */
     }
 
