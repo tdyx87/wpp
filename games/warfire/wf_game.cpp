@@ -278,6 +278,7 @@ void Warfire::stepGame()
 
     /* ---- level up: frozen, three cards, one pick ------------------------ */
     if (app == APP_LEVELUP) {
+        m_mapOpen = 0;                      /* the cards outrank the map     */
         if (ActionDown(ACT_LEFT,  VK_LEFT))  { if (--m_perkSel < 0) m_perkSel = 2; }
         if (ActionDown(ACT_RIGHT, VK_RIGHT)) { if (++m_perkSel > 2) m_perkSel = 0; }
         if (ActionDown(ACT_UP,    VK_UP))    m_perkSel = 0;
@@ -295,6 +296,7 @@ void Warfire::stepGame()
 
     /* ---- run over: summary panel --------------------------------------- */
     if (app == APP_DEAD || app == APP_WIN) {
+        m_mapOpen = 0;                      /* the summary outranks the map  */
         if (ActionDown(ACT_RESTART, 'R')) startRun();
         else if (ActionDown(ACT_BACK, VK_RETURN, 'J', VK_SPACE))
             m_screen = SCR_TITLE;
