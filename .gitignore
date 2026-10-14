@@ -1,5 +1,13 @@
 # CMake build trees
-/build/
+#
+# `/build/*` rather than `/build/` so that the two helper scripts which live
+# there can be re-included.  They are source, not output: gen_gf_text.py
+# regenerates games/guofeng/gf_text.h (a committed header), and ppm2png.py
+# converts the tests' PPM dumps to PNG.  Ignoring the whole directory would
+# lose the generator and leave the header unexplained on a fresh clone.
+/build/*
+!/build/gen_gf_text.py
+!/build/ppm2png.py
 /out/
 cmake-build-*/
 

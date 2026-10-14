@@ -132,3 +132,48 @@ if(TARGET warfire_core)
 else()
     message(STATUS "tests:  warfire_test skipped (WPP16_BUILD_GAME=OFF)")
 endif()
+
+# ============================================================================
+#  Guofeng -- headless unit test for the isometric prototype
+# ----------------------------------------------------------------------------
+#  gf_core (the projection, the scene, the camera) is driven directly; the
+#  atlas and gf_render are driven into an off-screen WCanvas and the pixels are
+#  read back.  The atlas needs a GDI font for its labels, so the atlas and
+#  render sections are skipped (not failed) if that is unavailable.
+#
+#  Baking the ground sheet is the slow part: 2048x1024 pixels of procedural
+#  texture, plus a thumbnail pass.  Hence the longer timeout.
+# ============================================================================
+if(TARGET guofeng_core)
+
+    add_executable(guofeng_test test_guofeng.cpp)
+
+    target_include_directories(guofeng_test
+        PRIVATE
+            "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_SOURCE_DIR}/games/guofeng"
+    )
+
+    target_compile_definitions(guofeng_test
+        PRIVATE
+            _CONSOLE
+            _CRT_SECURE_NO_WARNINGS
+            $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+    )
+
+    target_link_libraries(guofeng_test PRIVATE guofeng_core)
+
+    wpp16_apply_target_settings(guofeng_test)
+
+    add_test(NAME guofeng.logic COMMAND guofeng_test)
+
+    set_tests_properties(guofeng.logic PROPERTIES
+        LABELS "game"
+        TIMEOUT 120
+    )
+
+    message(STATUS "tests:  ${CMAKE_CURRENT_SOURCE_DIR} -> ${WPP16_RUNTIME_OUTPUT_DIR}/guofeng_test.exe")
+
+else()
+    message(STATUS "tests:  guofeng_test skipped (WPP16_BUILD_GAME=OFF)")
+endif()
