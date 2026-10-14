@@ -371,16 +371,7 @@ void Renderer::drawHud(WCanvas &cv, const World &w, const Atlas &atlas)
         }
     }
 
-    /* ---- game over ------------------------------------------------------ */
-    if (st.gameover) {
-        cv.SetPos(0, 0);
-        cv.Draw(WBox(FIELD_W, FIELD_H, WPixel(0x000000)), BLIT_TRANS);
-        ++m_count;
-
-        blitCentered(cv, *atlas.Label(WF_LBL_DEAD), FIELD_W / 2, FIELD_H / 2 - 70, BLIT_MASK);
-        blitCentered(cv, *atlas.Label(WF_LBL_RESTART), FIELD_W / 2, FIELD_H / 2 + 4, BLIT_MASK);
-        drawNumber(cv, atlas, DIGIT_BIG, p.level, FIELD_W / 2, FIELD_H / 2 + 60, 1);
-    }
+    /* ---- the run summary lives in DrawOver(); the HUD only reads live state */
 }
 
 /* ---------------------------------------------------------------- minimap */
@@ -654,10 +645,408 @@ void Renderer::DrawMap(WCanvas &cv, const World &w, const Atlas &atlas)
     cv.SetPos(0, 0);
 }
 
+/* ==========================================================================
+ *  product shell screens
+ *
+ *  Same contract as Draw(): WCanvas applies the link submitted FIRST last,
+ *  i.e. on top.  Every screen below therefore submits its UI first and the
+ *  full-screen backdrop LAST (bottom), which is why drawBackdrop() is called
+ *  at the end of each one and not the beginning.
+ * ========================================================================*/
+
+/* The menu sky.  Bands lerp from a cold night blue at the top to a deep navy
+   at the bottom; a horizon rule marks the ground plane the character line-up
+   stands on; a handful of additive embers drift on two slow sines so the menu
+   never looks like a still image.
+
+   The palette is deliberately kept ABOVE the vignette's darkest value (26,32,
+   26): the vignette subtracts, so a band that dark sits under it would crush
+   to pure black in the corners and read as a hole in the screen. */
+void Renderer::drawBackdrop(WCanvas &cv, unsigned tick)
+{
+    const int rows = 16;
+    const int rh   = (FIELD_H + rows - 1) / rows;
+    for (int i = 0; i < rows; ++i) {
+        int t = (i * 255) / (rows - 1);
+        int r = (0x3E * (255 - t) + 0x28 * t) / 255;
+        int g = (0x52 * (255 - t) + 0x34 * t) / 255;
+        int b = (0x76 * (255 - t) + 0x50 * t) / 255;
+        cv.SetPos(0, i * rh);
+        cv.Draw(WBox(FIELD_W, rh,
+                     WPixel((DWORD)((r << 16) | (g << 8) | b))), BLIT_COPY);
+        ++m_count;
+    }
+
+    /* horizon */
+    cv.SetPos(0, 416);
+    cv.Draw(WBox(FIELD_W, 2, WPixel((DWORD)0x4A5C78)), BLIT_COPY);
+    ++m_count;
+    cv.SetPos(0, 418);
+    cv.Draw(WBox(FIELD_W, 1, WPixel((DWORD)0x243048)), BLIT_COPY);
+    ++m_count;
+
+    /* drifting embers: gold ones are sparks, the cold ones are 2x2 boxes */
+    for (int i = 0; i < 16; ++i) {
+        float ph = (float)i * 0.83f;
+        float t  = (float)tick * 0.012f + ph;
+        int ex = (int)(FIELD_W * 0.5f + 330.0f * sinf(t * (0.31f + 0.017f * i)));
+        int ey = (int)(430.0f + 150.0f * sinf(t * (0.47f + 0.021f * i))
+                              - 26.0f * (float)i);
+        if (ey < 40) ey = 40;
+        if (ey > FIELD_H - 40) ey = FIELD_H - 40;
+        if (ex < 8)  ex += FIELD_W - 16;
+        if (ex > FIELD_W - 8) ex -= FIELD_W - 16;
+        if ((i & 1) == 0) {
+            cv.SetPos(ex, ey);
+            cv.Draw(WBox(2, 2, WPixel((DWORD)0x3C9CE0)), BLIT_ADDITIVE);
+        } else {
+            cv.SetPos(ex - 1, ey - 1);
+            cv.Draw(WBox(2, 2, WPixel((DWORD)0xFFD23C)), BLIT_ADDITIVE);
+        }
+        ++m_count;
+    }
+}
+
+/* Grunt / hero / brute posed on the horizon -- the cast, at a glance.  Each
+   actor is submitted BEFORE its shadow here, unlike the in-world version: the
+   shadow is subtractive, and on top of a sprite it crushes the dark outline
+   pixels at the feet down to pure black. */
+void Renderer::drawDiorama(WCanvas &cv, const Atlas &atlas)
+{
+    const int baseY = 418;
+
+    /* actors first, then their shadows, then the plinth under the feet */
+    WBitmap *b = atlas.Monster(MON_GRUNT, FACE_DOWN);
+    blit(cv, *b, 236 - b->GetW() / 2, baseY - b->GetH() + 4, BLIT_MASK);
+    blitShadow(cv, atlas, atlas.ShadowTierOf(MON_GRUNT), 236, baseY);
+
+    b = atlas.Hero(FACE_DOWN);
+    blit(cv, *b, 400 - b->GetW() / 2, baseY - b->GetH() + 4, BLIT_MASK);
+    blitShadow(cv, atlas, 0, 400, baseY);
+
+    b = atlas.Monster(MON_BRUTE, FACE_DOWN);
+    blit(cv, *b, 566 - b->GetW() / 2, baseY - b->GetH() + 4, BLIT_MASK);
+    blitShadow(cv, atlas, atlas.ShadowTierOf(MON_BRUTE), 566, baseY);
+
+    b = atlas.Monster(MON_ARCHER, FACE_DOWN);
+    blit(cv, *b, 682 - b->GetW() / 2, baseY - b->GetH() + 4, BLIT_MASK);
+    blitShadow(cv, atlas, 0, 682, baseY);
+
+    cv.SetPos(120, baseY + 2);
+    cv.Draw(WBox(560, 5, WPixel((DWORD)0x27334A)), BLIT_COPY);
+    ++m_count;
+    cv.SetPos(120, baseY + 7);
+    cv.Draw(WBox(560, 2, WPixel((DWORD)0x141C28)), BLIT_COPY);
+    ++m_count;
+}
+
+/* A filled panel with a 2 px edge.  The edge is submitted first so it lands on
+   top of the fill (same inverted order as everywhere else). */
+void Renderer::drawPanel(WCanvas &cv, int x, int y, int w, int h,
+                         unsigned long edge, unsigned long bg)
+{
+    cv.SetPos(x, y);
+    cv.Draw(WBox(w, 2, WPixel((DWORD)edge)), BLIT_COPY);
+    cv.SetPos(x, y + h - 2);
+    cv.Draw(WBox(w, 2, WPixel((DWORD)edge)), BLIT_COPY);
+    cv.SetPos(x, y);
+    cv.Draw(WBox(2, h, WPixel((DWORD)edge)), BLIT_COPY);
+    cv.SetPos(x + w - 2, y);
+    cv.Draw(WBox(2, h, WPixel((DWORD)edge)), BLIT_COPY);
+    cv.SetPos(x + 2, y + 2);
+    cv.Draw(WBox(w - 4, h - 4, WPixel((DWORD)bg)), BLIT_COPY);
+    m_count += 5;
+}
+
+int Renderer::numWidth(const Atlas &atlas, int set, int value) const
+{
+    char buf[16];
+    if (value < 0) value = 0;
+    if (value > 999999) value = 999999;
+    sprintf(buf, "%d", value);
+    int w = 0;
+    for (const char *p = buf; *p; ++p) w += atlas.DigitW(set, *p - '0');
+    return w;
+}
+
+/* The run summary is drawn by DrawOver(); the HUD itself only carries live
+   read-outs, so nothing here reacts to gameover. */
+
+/* mm:ss width in px, so a caller can centre it next to a label. */
+int Renderer::clockWidth(const Atlas &atlas, int seconds) const
+{
+    if (seconds < 0) seconds = 0;
+    int mm = seconds / 60;
+    return numWidth(atlas, DIGIT_SMALL, mm) + 12 +
+           atlas.DigitW(DIGIT_SMALL, 0) * 2;
+}
+
+/* mm:ss, centred.  The colon is two stacked 2x2 blocks -- there is no ASCII
+   font in the atlas, only digits, so punctuation is drawn as geometry. */
+void Renderer::drawClock(WCanvas &cv, const Atlas &atlas, int seconds, int cx, int y)
+{
+    if (seconds < 0) seconds = 0;
+    int mm = seconds / 60;
+    int ss = seconds % 60;
+    int x  = cx - clockWidth(atlas, seconds) / 2;
+    drawNumber(cv, atlas, DIGIT_SMALL, mm, x, y, 0);
+    x += numWidth(atlas, DIGIT_SMALL, mm) + 4;
+    int dy = y + atlas.DigitH(DIGIT_SMALL) / 2;
+    cv.SetPos(x, dy - 3);
+    cv.Draw(WBox(2, 2, WPixel((DWORD)COL_UI_DIM)), BLIT_COPY);
+    cv.SetPos(x, dy + 1);
+    cv.Draw(WBox(2, 2, WPixel((DWORD)COL_UI_DIM)), BLIT_COPY);
+    m_count += 2;
+    x += 8;
+    char buf[8];
+    sprintf(buf, "%02d", ss);
+    for (const char *p = buf; *p; ++p) {
+        blit(cv, *atlas.Digit(DIGIT_SMALL, *p - '0'), x, y, BLIT_MASK);
+        x += atlas.DigitW(DIGIT_SMALL, *p - '0');
+    }
+}
+
+/* ------------------------------------------------------------ title menu */
+
+void Renderer::DrawTitle(WCanvas &cv, const World &w, const Atlas &atlas,
+                         unsigned tick, int sel)
+{
+    m_count = 0;
+
+    /* logo + promise */
+    blitCentered(cv, *atlas.TitleArt(), FIELD_W / 2, 74, BLIT_MASK);
+    blitCentered(cv, *atlas.Label(WF_LBL_GOALTIP), FIELD_W / 2, 198, BLIT_MASK);
+
+    /* menu */
+    static const int ITEM[2] = { WF_LBL_START, WF_LBL_HOWTO };
+    for (int i = 0; i < 2; ++i) {
+        int w = atlas.LabelW(ITEM[i]);
+        int x = FIELD_W / 2 - w / 2;
+        int y = 252 + i * 46;
+
+        if (i == sel) {
+            /* gold tick on the left of the live row, pulsing underline under it */
+            int pw = (int)(60.0f + 40.0f * (0.5f + 0.5f * sinf((float)tick * 0.12f)));
+            cv.SetPos(x - 30, y + 2);
+            cv.Draw(WBox(5, 26, WPixel((DWORD)COL_BANNER)), BLIT_COPY);
+            cv.SetPos(FIELD_W / 2 - pw / 2, y + 32);
+            cv.Draw(WBox(pw, 3, WPixel((DWORD)COL_BANNER)), BLIT_COPY);
+            m_count += 2;
+            blit(cv, *atlas.Label(ITEM[i]), x, y, BLIT_MASK);
+        } else {
+            blit(cv, *atlas.Label(ITEM[i]), x, y, BLIT_MASK);
+            /* recede the dead rows.  BLIT_TRANS on a plain WBox paints the box
+               straight through (its alpha lives in a source channel a box does
+               not have), so the dimming is done by subtraction instead. */
+            cv.SetPos(x - 6, y - 2);
+            cv.Draw(WBox(w + 12, 32, WPixel((DWORD)0x1C2434)), BLIT_SUBTRACT);
+            ++m_count;
+        }
+    }
+
+    drawDiorama(cv, atlas);
+
+    /* best run so far */
+    {
+        int y = 470;
+        int bw = atlas.LabelW(WF_LBL_BEST);
+        int aw = atlas.LabelW(WF_LBL_WAVE_A);
+        int cw = atlas.LabelW(WF_LBL_WAVE_B);
+        int kw = atlas.LabelW(WF_LBL_KILL);
+        int wv = numWidth(atlas, DIGIT_SMALL, w.BestWave());
+        int kk = numWidth(atlas, DIGIT_SMALL, w.BestKills());
+        int total = bw + 18 + aw + 8 + wv + 8 + cw + 26 + kw + 8 + kk;
+        int x = FIELD_W / 2 - total / 2;
+        blit(cv, *atlas.Label(WF_LBL_BEST), x, y, BLIT_MASK); x += bw + 18;
+        blit(cv, *atlas.Label(WF_LBL_WAVE_A), x, y, BLIT_MASK); x += aw + 8;
+        drawNumber(cv, atlas, DIGIT_SMALL, w.BestWave(), x, y, 0);
+        x += wv + 8;
+        blit(cv, *atlas.Label(WF_LBL_WAVE_B), x, y, BLIT_MASK); x += cw + 26;
+        blit(cv, *atlas.Label(WF_LBL_KILL), x, y, BLIT_MASK); x += kw + 8;
+        drawNumber(cv, atlas, DIGIT_SMALL, w.BestKills(), x, y, 0);
+    }
+
+    /* hints */
+    blitCentered(cv, *atlas.Label(WF_LBL_SELECT),  FIELD_W / 2, 534, BLIT_MASK);
+    blitCentered(cv, *atlas.Label(WF_LBL_CONFIRM), FIELD_W / 2, 558, BLIT_MASK);
+
+    /* backdrop last: it covers the whole screen, so it has to sit underneath */
+    drawVignette(cv, atlas);              /* darken the edges, keep the logo */
+    drawBackdrop(cv, tick);
+
+    cv.SetPos(0, 0);
+}
+
+/* ------------------------------------------------------------- controls */
+
+void Renderer::DrawHowto(WCanvas &cv, const Atlas &atlas)
+{
+    m_count = 0;
+
+    /* the text first (top), then the panel under it: a WCanvas applies the
+       link submitted first last, so the panel has to come after its contents */
+    blitCentered(cv, *atlas.Label(WF_LBL_HOWTO), FIELD_W / 2, 116, BLIT_MASK);
+
+    for (int i = 0; i < 6; ++i) {
+        int y = 168 + i * 42;
+        cv.SetPos(164, y + 8);
+        cv.Draw(WBox(7, 7, WPixel((DWORD)COL_BANNER)), BLIT_COPY);
+        ++m_count;
+        blit(cv, *atlas.Label(WF_LBL_HOW0 + i), 192, y, BLIT_MASK);
+    }
+
+    blitCentered(cv, *atlas.Label(WF_LBL_BACK),    FIELD_W / 2, 428, BLIT_MASK);
+    blitCentered(cv, *atlas.Label(WF_LBL_CONFIRM), FIELD_W / 2, 456, BLIT_MASK);
+
+    drawPanel(cv, 116, 92, 568, 404, (unsigned long)COL_UI_EDGE,
+              (unsigned long)COL_UI_BG);
+    drawVignette(cv, atlas);
+    drawBackdrop(cv, 0);
+
+    cv.SetPos(0, 0);
+}
+
+/* ------------------------------------------------------------- perk cards */
+
+void Renderer::DrawPerks(WCanvas &cv, const World &w, const Atlas &atlas, int sel)
+{
+    const Stats &st = w.State();
+
+    blitCentered(cv, *atlas.Label(WF_LBL_UPGRADE), FIELD_W / 2, 118, BLIT_MASK);
+    {
+        int lw = atlas.LabelW(WF_LBL_LEVEL);
+        int x  = FIELD_W / 2 - (lw + 10 + numWidth(atlas, DIGIT_BIG, w.Hero().level)) / 2;
+        blit(cv, *atlas.Label(WF_LBL_LEVEL), x, 158, BLIT_MASK);
+        drawNumber(cv, atlas, DIGIT_BIG, w.Hero().level, x + lw + 10, 152, 0);
+        if (st.pending > 1) {
+            /* still owed another pick after this one -- say so, or the player
+               quits the overlay thinking the level is spent */
+            int ox = FIELD_W / 2 + (lw + 10 + numWidth(atlas, DIGIT_BIG,
+                                                      w.Hero().level)) / 2 + 14;
+            drawNumber(cv, atlas, DIGIT_SMALL, st.pending, ox, 160, 0);
+        }
+    }
+
+    const int CW = 204, CH = 156, GAP = 26;
+    int x0 = (FIELD_W - (CW * 3 + GAP * 2)) / 2;
+    int y0 = 200;
+
+    const int *offers = w.PerkOffers();
+    for (int i = 0; i < 3; ++i) {
+        int x = x0 + i * (CW + GAP);
+        int perk = offers[i];
+        int live = (i == sel);
+
+        /* card contents first, the panel under them (see the order rule) */
+        if (perk >= 0 && perk < PERK_COUNT) {
+            blitCentered(cv, *atlas.Label(WF_LBL_PERK0 + perk),
+                         x + CW / 2, y0 + 44, BLIT_MASK);
+            blitCentered(cv, *atlas.Label(WF_LBL_PERKEFF0 + perk),
+                         x + CW / 2, y0 + 92, BLIT_MASK);
+            int taken = w.PerkTaken(perk);
+            if (taken > 0) {
+                int tx = x + CW / 2 -
+                         (numWidth(atlas, DIGIT_SMALL, taken) + 4) / 2;
+                drawNumber(cv, atlas, DIGIT_SMALL, taken, tx, y0 + 120, 0);
+            }
+        }
+
+        /* pick number badge */
+        drawNumber(cv, atlas, DIGIT_SMALL, i + 1, x + 14, y0 + 14, 0);
+
+        if (live) {
+            /* gold underline so the cursor is obvious at a glance */
+            int uw = 120;
+            cv.SetPos(x + (CW - uw) / 2, y0 + CH + 8);
+            cv.Draw(WBox(uw, 3, WPixel((DWORD)COL_BANNER)), BLIT_COPY);
+            ++m_count;
+        }
+
+        drawPanel(cv, x, y0, CW, CH,
+                  live ? (unsigned long)COL_BANNER : (unsigned long)COL_UI_EDGE,
+                  live ? (unsigned long)0x1E2636 : (unsigned long)0x161C28);
+    }
+
+    blitCentered(cv, *atlas.Label(WF_LBL_SELECT),  FIELD_W / 2, 414, BLIT_MASK);
+    blitCentered(cv, *atlas.Label(WF_LBL_CONFIRM), FIELD_W / 2, 438, BLIT_MASK);
+
+    /* freeze the world behind the cards: subtract a dark wash, which leaves
+       the frozen frame readable underneath (a BLIT_TRANS box would paint
+       solid black -- its alpha comes from a source channel a WBox lacks) */
+    cv.SetPos(0, 0);
+    cv.Draw(WBox(FIELD_W, FIELD_H, WPixel((DWORD)0x202838)), BLIT_SUBTRACT);
+    ++m_count;
+
+    cv.SetPos(0, 0);
+}
+
+/* ------------------------------------------------------------ run summary */
+
+void Renderer::DrawOver(WCanvas &cv, const World &w, const Atlas &atlas, int won)
+{
+    const Player &p  = w.Hero();
+    const Stats  &st = w.State();
+
+    blitCentered(cv, *atlas.Label(won ? WF_LBL_WIN : WF_LBL_DEAD),
+                 FIELD_W / 2, 104, BLIT_MASK);
+
+    /* two columns: the label pinned left, the value centred on the right half,
+       so the eye runs down one line and reads the row in one go */
+    const int lx = 252;
+    const int vx = 474;
+    blit(cv, *atlas.Label(WF_LBL_WAVE_A), lx, 212, BLIT_MASK);
+    blit(cv, *atlas.Label(WF_LBL_WAVE_B), lx, 240, BLIT_MASK);
+    drawNumber(cv, atlas, DIGIT_BIG, st.wave, vx, 216, 1);
+
+    blit(cv, *atlas.Label(WF_LBL_KILL), lx, 282, BLIT_MASK);
+    drawNumber(cv, atlas, DIGIT_BIG, st.kills, vx, 282, 1);
+
+    blit(cv, *atlas.Label(WF_LBL_GOLD), lx, 326, BLIT_MASK);
+    drawNumber(cv, atlas, DIGIT_BIG, p.gold, vx, 326, 1);
+
+    blit(cv, *atlas.Label(WF_LBL_TIME), lx, 370, BLIT_MASK);
+    drawClock(cv, atlas, st.frame / 60, vx, 370);
+
+    /* best run */
+    {
+        int bw = atlas.LabelW(WF_LBL_BEST);
+        int aw = atlas.LabelW(WF_LBL_WAVE_A);
+        int ww = atlas.LabelW(WF_LBL_WAVE_B);
+        int kw = atlas.LabelW(WF_LBL_KILL);
+        int nw = numWidth(atlas, DIGIT_SMALL, w.BestWave());
+        int kk = numWidth(atlas, DIGIT_SMALL, w.BestKills());
+        int cx = FIELD_W / 2;
+        int x  = cx - (bw + 14 + aw + 6 + nw + 6 + ww + 18 + kw + 8 + kk) / 2;
+        int y  = 452;
+        blit(cv, *atlas.Label(WF_LBL_BEST), x, y, BLIT_MASK); x += bw + 14;
+        blit(cv, *atlas.Label(WF_LBL_WAVE_A), x, y, BLIT_MASK); x += aw + 6;
+        drawNumber(cv, atlas, DIGIT_SMALL, w.BestWave(), x, y, 0);
+        x += nw + 6;
+        blit(cv, *atlas.Label(WF_LBL_WAVE_B), x, y, BLIT_MASK); x += ww + 18;
+        blit(cv, *atlas.Label(WF_LBL_KILL), x, y, BLIT_MASK); x += kw + 8;
+        drawNumber(cv, atlas, DIGIT_SMALL, w.BestKills(), x, y, 0);
+    }
+
+    /* hints: R jumps straight back in, Enter goes to the menu */
+    blitCentered(cv, *atlas.Label(WF_LBL_RESTART), FIELD_W / 2, 512, BLIT_MASK);
+    blitCentered(cv, *atlas.Label(WF_LBL_BACK), FIELD_W / 2 + 150, 512, BLIT_MASK);
+
+    /* the panel goes under its own contents, and the dim under the panel */
+    drawPanel(cv, 208, 186, 384, 236, (unsigned long)COL_UI_EDGE,
+              (unsigned long)0x141820);
+
+    /* dim the frozen world: submitted last, so it stays under the panel */
+    cv.SetPos(0, 0);
+    cv.Draw(WBox(FIELD_W, FIELD_H, WPixel((DWORD)0x202838)), BLIT_SUBTRACT);
+    ++m_count;
+
+    cv.SetPos(0, 0);
+}
+
 /* ------------------------------------------------------------------- draw */
 
 Renderer::Renderer()
-    : m_count(0), m_ox(0), m_oy(0), m_rng(0x2468ACE0u),
+    : m_count(0), m_perkSel(0), m_ox(0), m_oy(0), m_rng(0x2468ACE0u),
       m_mini(0), m_miniW(128), m_miniH(96), m_miniX(0), m_miniY(0),
       m_big(0), m_bigW(0), m_bigH(0), m_bigX(0), m_bigY(0), m_bigTile(10), m_bigHero(-1)
 {
@@ -673,8 +1062,9 @@ Renderer::~Renderer()
 
 void Renderer::Reset()
 {
-    m_count = 0;
-    m_rng   = 0x2468ACE0u;
+    m_count   = 0;
+    m_perkSel = 0;
+    m_rng     = 0x2468ACE0u;
 }
 
 void Renderer::Draw(WCanvas &cv, const World &w, const Atlas &atlas)
@@ -694,6 +1084,11 @@ void Renderer::Draw(WCanvas &cv, const World &w, const Atlas &atlas)
     drawHud(cv, w, atlas);          /* submitted first  -> topmost          */
     drawMinimap(cv, w, atlas);      /* under the HUD, above everything else */
     drawVignette(cv, atlas);        /* darkens the world, never the HUD     */
+
+    /* ---- product overlays sit between the HUD and the world ------------- */
+    if (st.app == APP_LEVELUP)     DrawPerks(cv, w, atlas, m_perkSel);
+    else if (st.gameover)          DrawOver(cv, w, atlas, st.app == APP_WIN);
+
     drawEffects(cv, w, atlas);
     drawEntities(cv, w, atlas);
     drawDrops(cv, w, atlas);

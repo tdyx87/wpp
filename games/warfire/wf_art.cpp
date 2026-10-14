@@ -558,6 +558,8 @@ Atlas::Atlas() : m_ok(false)
     memset(m_label, 0, sizeof(m_label));
     memset(m_slash, 0, sizeof(m_slash));
     memset(m_ring,  0, sizeof(m_ring));
+    m_title  = 0;
+    m_titleW = 0;
     m_spark = 0;
     m_coin  = 0;
     m_potion = 0;
@@ -587,6 +589,7 @@ void Atlas::Destroy()
     for (int i = 0; i < WF_LABEL_COUNT; ++i) { delete m_label[i]; m_label[i] = 0; }
     for (int i = 0; i < FACE_COUNT; ++i) { delete m_slash[i]; m_slash[i] = 0; }
     for (int i = 0; i < 2; ++i) { delete m_ring[i]; m_ring[i] = 0; }
+    delete m_title;  m_title = 0;  m_titleW = 0;
     delete m_spark; m_spark = 0;
     delete m_coin;  m_coin = 0;
     delete m_potion; m_potion = 0;
@@ -713,11 +716,63 @@ bool Atlas::Build()
         COL_BANNER,     /* 烽火行    */
         COL_HP,         /* 阵亡      */
         COL_UI_TEXT,    /* 按 R 重来 */
-        COL_UI_DIM      /* 剩余      */
+        COL_UI_DIM,     /* 剩余      */
+        /* ---- product shell (title / howto / perk cards / run summary) ---- */
+        COL_UI_TEXT,    /* 开始游戏          */
+        COL_UI_DIM,     /* 返回              */
+        COL_UI_TEXT,    /* 操作说明          */
+        COL_BANNER,     /* 选择强化          */
+        COL_UI_DIM,     /* 时长              */
+        COL_DMG_CRIT,   /* 最高纪录          */
+        COL_BANNER,     /* 过关斩将！        */
+        COL_UI_DIM,     /* 目标：坚守到第 10 波并击败首领 */
+        COL_UI_TEXT,    /* WASD / 方向键 移动 */
+        COL_UI_TEXT,    /* J / 空格 / 左键 攻击 */
+        COL_UI_TEXT,    /* K / Shift / 右键 冲刺 */
+        COL_UI_TEXT,    /* L / Ctrl 旋风斩（消耗怒气） */
+        COL_UI_DIM,     /* M 地图 放大查看（暂停） */
+        COL_UI_DIM,     /* R 重来  Esc 退出 */
+        /* perk name (gold: the card reads as the reward it is) ... */
+        COL_BANNER,     /* 猛攻   */
+        COL_BANNER,     /* 铁骨   */
+        COL_BANNER,     /* 风靴   */
+        COL_BANNER,     /* 迅击   */
+        COL_BANNER,     /* 致命   */
+        COL_BANNER,     /* 嗜血   */
+        COL_BANNER,     /* 飘逸   */
+        COL_BANNER,     /* 旋风   */
+        /* ... and the perk effect line (dim, so the name carries the card) */
+        COL_UI_DIM,     /* 攻击 +5           */
+        COL_UI_DIM,     /* 生命上限 +26      */
+        COL_UI_DIM,     /* 移动速度提升      */
+        COL_UI_DIM,     /* 攻击速度提升      */
+        COL_UI_DIM,     /* 暴击率 +6%        */
+        COL_UI_DIM,     /* 命中回复生命      */
+        COL_UI_DIM,     /* 冲刺冷却缩短      */
+        COL_UI_DIM,     /* 旋风斩强化        */
+        COL_UI_TEXT,    /* 按 Enter 确认     */
+        COL_UI_DIM      /* 上下键 / 1 2 切换 */
     };
 
     for (int i = 0; i < WF_LABEL_COUNT; ++i)
         bakeGlyph(m_label[i], m_labelW[i], fBig, WF_LABEL[i], LABEL_COL[i], 2);
+
+    /* ---- title logo ----------------------------------------------------- */
+    /* The menu headline deserves more than the 24 px HUD font, so the title is
+       rasterised once at 72 px into its own bitmap.  Same trick as the labels:
+       no anti-aliasing, a hard shadow one pass below, magenta padding for
+       BLIT_MASK. */
+    hf = CreateFontA(72, 0, 0, 0, FW_BOLD, 0, 0, 0, GB2312_CHARSET,
+                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                     DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, YAHEI);
+    if (!hf) { m_ok = false; return false; }
+    {
+        WFont fHuge;
+        fHuge.Create(hf, 16, 1024);
+        DeleteObject(hf);
+        bakeGlyph(m_title, m_titleW, fHuge, WF_LABEL[WF_LBL_TITLE],
+                  (unsigned long)COL_BANNER, 8);
+    }
 
     m_ok = true;
     return true;

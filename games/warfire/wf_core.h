@@ -28,7 +28,9 @@ enum {
     MAX_MONSTERS = 160,
     MAX_FX       = 320,
     MAX_DROPS    = 48,
-    MAX_ARROWS   = 64
+    MAX_ARROWS   = 64,
+
+    WIN_WAVES    = 10                 /* clear this wave -> victory      */
 };
 
 /* ------------------------------------------------------------------ tiles */
@@ -72,6 +74,31 @@ enum FxKind {
 enum DropKind { DROP_COIN = 0, DROP_POTION };
 
 enum Facing { FACE_DOWN = 0, FACE_UP, FACE_LEFT, FACE_RIGHT, FACE_COUNT };
+
+/* ------------------------------------------------------------ app flow */
+/* Run-level state.  Stored in the world so the shell (input) and the
+   renderer (which only see a World) agree on what to show.  The title /
+   controls screens live in the shell, before a run exists. */
+enum AppState {
+    APP_PLAY  = 0,   /* the simulation runs                            */
+    APP_LEVELUP,     /* paused: pick one of three perks                 */
+    APP_DEAD,        /* run over (lost)                                 */
+    APP_WIN          /* run over (cleared every wave)                   */
+};
+
+/* The eight level-up perks.  applyPerk() maps each to a hero buff; the
+   strings the player sees live in wf_text.h (WF_LBL_PERK0..). */
+enum Perk {
+    PERK_BLADE = 0,  /* more attack                                       */
+    PERK_IRON,       /* more max hp                                       */
+    PERK_BOOTS,      /* faster movement                                   */
+    PERK_HASTE,      /* faster attacks                                    */
+    PERK_EDGE,       /* more critical chance                              */
+    PERK_FANG,       /* hits restore a little hp                          */
+    PERK_WIND,       /* dash recharges faster                             */
+    PERK_WHIRL,      /* whirlwind cheaper + wider                         */
+    PERK_COUNT
+};
 
 /* --------------------------------------------------------------- palette */
 enum {
@@ -191,6 +218,15 @@ struct Player {
     int   spinTimer;
     int   spinCd;
 
+    /* level-up perk buffs (1.0 = neutral), applied by applyPerk() */
+    float spdMul;          /* movement speed multiplier                    */
+    float atkSpdMul;       /* attack-timer multiplier (<1 = faster)        */
+    float critAdd;         /* additive critical-chance                     */
+    float dashCdMul;       /* dash cooldown multiplier (<1 = faster)       */
+    float spinCdMul;       /* whirlwind cooldown multiplier                */
+    float spinRangeAdd;    /* extra whirlwind reach in px                  */
+    int   lifesteal;       /* hp restored when a swing connects            */
+
     unsigned char alive;
 };
 
@@ -209,6 +245,8 @@ struct Stats {
     int monstersThisWave;
     int killsThisWave;
     int hurtFlash;
+    int app;             /* AppState (PLAY / LEVELUP / DEAD / WIN)         */
+    int pending;         /* perk picks still owed                          */
 };
 
 struct Input {
@@ -278,8 +316,25 @@ public:
     bool SpawnPos(float cx, float cy, float r0, float r1,
                   float &ox, float &oy) const;
 
+    /* --- run flow / progression (product) ---------------------------- */
+    int  App() const { return m_st.app; }
+    int  PendingPerks() const { return m_st.pending; }
+    const int *PerkOffers() const { return m_offer; }   /* 3 perk ids   */
+    int  PerkTaken(int perk) const
+         { return (perk >= 0 && perk < PERK_COUNT) ? m_perkCount[perk] : 0; }
+    void ChoosePerk(int slot);          /* apply one of the 3 offers      */
+
+    int  BestWave()  const { return m_bestWave; }
+    int  BestKills() const { return m_bestKills; }
+    void EnableSave(int on) { m_save = on ? 1 : 0; }
+    void LoadSave();
+    void SaveSave();
+
 private:
     void updateFlow();
+    void applyPerk(int perk);
+    void rollOffers();
+    void endRun();
     void buildMap();
     void stepHero(const Input &in);
     void stepMonsters();
@@ -318,6 +373,12 @@ private:
     int      m_fxCursor;
     int      m_dropCursor;
     unsigned m_rng;
+
+    /* progression */
+    int      m_offer[3];               /* the 3 perks on offer right now   */
+    int      m_perkCount[PERK_COUNT];  /* how many times each was taken    */
+    int      m_bestWave, m_bestKills; /* high score (loaded / saved)      */
+    int      m_save;                  /* 1 = actually touch the save file */
 };
 
 /* xorshift32 -- deterministic, so the tests can rely on the exact sequence. */

@@ -43,6 +43,20 @@ public:
        drop, the hero and the camera box in detail.  Driven headless too. */
     void DrawMap(WCanvas &canvas, const World &w, const Atlas &atlas);
 
+    /* ---- product shell screens -------------------------------------------
+       Title menu, controls page, the level-up perk cards and the run summary.
+       They only touch WCanvas, so the tests render them headless exactly like
+       the in-game frame.  Draw() itself dispatches the perk cards and the run
+       summary from World::App(), so the shell never has to know about them. */
+    void DrawTitle(WCanvas &canvas, const World &w, const Atlas &atlas,
+                   unsigned tick, int sel);
+    void DrawHowto(WCanvas &canvas, const Atlas &atlas);
+    void DrawPerks(WCanvas &canvas, const World &w, const Atlas &atlas, int sel);
+    void DrawOver (WCanvas &canvas, const World &w, const Atlas &atlas, int won);
+
+    /* Which perk card the shell's cursor is on (Draw reads it back). */
+    void SetPerkSel(int sel) { m_perkSel = sel; }
+
     /* Number of draw calls produced by the last Draw(); used by the tests to
        prove the frame stays inside its budget. */
     int ItemCount() const { return m_count; }
@@ -65,6 +79,15 @@ private:
     void buildBig     (const World &w);
     void drawBig      (WCanvas &cv, const World &w, const Atlas &atlas);
 
+    /* shell screens (see the public block above) */
+    void drawBackdrop(WCanvas &cv, unsigned tick);
+    void drawDiorama (WCanvas &cv, const Atlas &atlas);
+    void drawPanel   (WCanvas &cv, int x, int y, int w, int h,
+                      unsigned long edge, unsigned long bg);
+    void drawClock   (WCanvas &cv, const Atlas &atlas, int seconds, int cx, int y);
+    int  clockWidth  (const Atlas &atlas, int seconds) const;
+    int  numWidth    (const Atlas &atlas, int set, int value) const;
+
     void drawNumber(WCanvas &cv, const Atlas &atlas, int set, int value,
                     int sx, int sy, int centered);
     void blit(WCanvas &cv, WBitmap &bmp, int sx, int sy, int style);
@@ -78,6 +101,7 @@ private:
 
     Ent m_ents[MAX_MONSTERS + 1];
     int m_count;
+    int m_perkSel;                  /* perk card the cursor is on           */
     int m_ox, m_oy;             /* camera origin, shake already folded in */
     unsigned m_rng;
 

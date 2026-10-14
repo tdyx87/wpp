@@ -21,6 +21,7 @@
 #include "windsoul.h"
 #include "wsbitmap.h"
 #include "wscanvas.h"
+#include "wsgeo.h"
 
 #include "wstimer.h"
 
@@ -1238,6 +1239,269 @@ static void test_render_bigmap(void)
     if (const char *q = getenv("WF_DUMP_BIG")) dumpFrame(out, q);
 }
 
+/* --------------------------------------------------------------- [25] */
+/*  Product loop: every level owes a pick-one-of-three perk, and clearing the
+ *  final wave wins the run and records a best score.  Driven headless.
+ * ------------------------------------------------------------------------ */
+static void test_progression(void)
+{
+    printf("[25] progression: perks, victory, best score\n");
+
+    World w;
+    check(w.App() == APP_PLAY, "a run starts in the play state");
+    check(w.PendingPerks() == 0, "no perk owed at level 1");
+
+    /* farm exactly one level: five grunts = 60 exp = level 2 */
+    int idx = -1;
+    for (int n = 0; n < 5; ++n) {
+        w.SpawnMonster(MON_GRUNT, w.Hero().x, w.Hero().y + 40.0f);
+        for (int i = 0; i < MAX_MONSTERS; ++i)
+            if (w.Monsters()[i].alive) { idx = i; break; }
+        if (idx >= 0) w.DamageMonster(idx, 100000, 0, w.Hero().x, w.Hero().y);
+    }
+    printf("      level %d, pending perks %d\n", w.Hero().level, w.PendingPerks());
+    check(w.Hero().level > 1, "killing grants a level");
+    check(w.PendingPerks() == 1, "the level owes exactly one perk");
+    check(w.App() == APP_LEVELUP, "and flips to the level-up overlay state");
+
+    const int *offers = w.PerkOffers();
+    check(offers[0] >= 0 && offers[0] < PERK_COUNT &&
+          offers[1] >= 0 && offers[1] < PERK_COUNT &&
+          offers[2] >= 0 && offers[2] < PERK_COUNT, "three perks on offer");
+    check(offers[0] != offers[1] && offers[1] != offers[2] &&
+          offers[0] != offers[2], "the three offers are distinct");
+
+    /* choose slot 0 and confirm the matching hero buff moved */
+    int chosen = offers[0];
+    int atk0 = w.Hero().atk, hp0 = w.Hero().maxhp;
+    float spd0 = w.Hero().spdMul, atkSpd0 = w.Hero().atkSpdMul, crit0 = w.Hero().critAdd;
+    float dash0 = w.Hero().dashCdMul, spin0 = w.Hero().spinCdMul;
+    w.ChoosePerk(0);
+    check(w.PerkTaken(chosen) == 1, "the chosen perk is recorded");
+    check(w.PendingPerks() == 0, "the pick is consumed");
+    check(w.App() == APP_PLAY, "and the run resumes");
+    switch (chosen) {
+    case PERK_BLADE: check(w.Hero().atk == atk0 + 5, "blade raises attack"); break;
+    case PERK_IRON:  check(w.Hero().maxhp == hp0 + 26, "iron raises max hp"); break;
+    case PERK_BOOTS: check(w.Hero().spdMul > spd0, "boots raise move speed"); break;
+    case PERK_HASTE: check(w.Hero().atkSpdMul < atkSpd0, "haste quickens attacks"); break;
+    case PERK_EDGE:  check(w.Hero().critAdd > crit0, "edge raises crit chance"); break;
+    case PERK_FANG:  check(w.Hero().lifesteal > 0, "fang grants lifesteal"); break;
+    case PERK_WIND:  check(w.Hero().dashCdMul < dash0, "wind quickens the dash"); break;
+    case PERK_WHIRL: check(w.Hero().spinCdMul < spin0 && w.Hero().spinRangeAdd > 0.0f,
+                           "whirl cheapens and widens the spin"); break;
+    default: check(0, "unknown perk");
+    }
+
+    /* victory: drain the final wave and the run must end in a win, recording
+       the best wave/kills in memory (save file untouched here) */
+    World w2;
+    w2.StartWave(WIN_WAVES);
+    int guard = 0;
+    while (w2.App() != APP_WIN && guard < 20000) {
+        ++guard;
+        w2.Step(noInput());
+        if (w2.PendingPerks() > 0) w2.ChoosePerk(0);
+        for (int i = 0; i < MAX_MONSTERS; ++i)
+            if (w2.Monsters()[i].alive)
+                w2.DamageMonster(i, 100000, 0, w2.Hero().x, w2.Hero().y);
+    }
+    printf("      cleared wave %d in %d frames -> app=%d\n",
+           w2.State().wave, guard, w2.App());
+    check(w2.App() == APP_WIN, "clearing the last wave wins the run");
+    check(w2.State().gameover == 1, "a win also ends the run");
+    check(w2.BestWave() == WIN_WAVES, "the best wave is recorded");
+    check(w2.BestKills() >= w2.State().monstersThisWave, "and the best kill tally");
+}
+
+/* --------------------------------------------------------------- [26] */
+/*  Product shell screens: title menu, controls page, the perk cards and the
+ *  run summary.  All of them are renderer-only (they touch WCanvas, not the
+ *  window), so each one is rendered headless and read back, and the two
+ *  selectable states of the menu and the perk cards must actually differ --
+ *  that is what proves the cursor moves.
+ * ------------------------------------------------------------------------ */
+static void renderInto(WBitmap &out, Renderer &r, int which,
+                       const World &w, int arg, int *items)
+{
+    WCanvas cv(FIELD_W, FIELD_H);
+    switch (which) {
+    case 0: r.DrawTitle(cv, w, *g_atlas, 123u, arg); break;
+    case 1: r.DrawHowto(cv, *g_atlas);               break;
+    default:
+        /* the perk overlay is meant to sit on top of a frozen world, so the
+           world sheet goes down LAST (submitted last = bottom), exactly the
+           order Draw() uses */
+        r.DrawPerks(cv, w, *g_atlas, arg);
+        cv.SetPos(0, 0);
+        cv.Draw(WBox(FIELD_W, FIELD_H, WPixel((DWORD)COL_GRASS_A)), BLIT_COPY);
+        break;
+    }
+    if (items) *items = r.ItemCount();
+    cv.Update();
+    cv.SetPos(0, 0);
+    out.Clear(WPixel(0, 0, 0));
+    cv.BlitTo(out);
+}
+
+/* counts pixels whose RGB is "mostly this colour" */
+static int countColor(const WBitmap &img, int r, int g, int b, int tol)
+{
+    int n = 0;
+    for (int y = 0; y < FIELD_H; y += 3)
+        for (int x = 0; x < FIELD_W; x += 3) {
+            DWORD pv = (DWORD)img[y][x];
+            int r0 = (int)((pv >> 16) & 0xFF), g0 = (int)((pv >> 8) & 0xFF),
+                b0 = (int)(pv & 0xFF);
+            if (abs(r0 - r) < tol && abs(g0 - g) < tol && abs(b0 - b) < tol) ++n;
+        }
+    return n;
+}
+
+static int countDiff(const WBitmap &a, const WBitmap &b)
+{
+    int n = 0;
+    for (int y = 0; y < FIELD_H; y += 2)
+        for (int x = 0; x < FIELD_W; x += 2)
+            if ((DWORD)a[y][x] != (DWORD)b[y][x]) ++n;
+    return n;
+}
+
+static void test_render_shell(void)
+{
+    printf("[26] render: title / howto / perks / run summary\n");
+
+    World w;
+    WBitmap a(FIELD_W, FIELD_H), b(FIELD_W, FIELD_H);
+
+    /* ---- title menu ----------------------------------------------------- */
+    {
+        Renderer r;
+        int items = 0;
+        renderInto(a, r, 0, w, 0, &items);
+        printf("      title: %d draw calls\n", items);
+        check(items > 20, "the title screen submits its layers");
+    }
+    {
+        int blank = 0;
+        for (int y = 0; y < FIELD_H; y += 7)
+            for (int x = 0; x < FIELD_W; x += 7)
+                if ((DWORD)a[y][x] == 0) ++blank;
+        printf("      title: %d blank samples\n", blank);
+        check(blank == 0, "the title screen fills the viewport");
+    }
+    int gold = countColor(a, 0xFF, 0xD2, 0x3C, 40);
+    printf("      title: %d gold samples\n", gold);
+    check(gold > 60, "the gold logo is drawn");
+    if (const char *p = getenv("WF_DUMP_TITLE")) dumpFrame(a, p);
+
+    /* the cursor must visibly move between the two rows */
+    {
+        Renderer r;
+        renderInto(b, r, 0, w, 1, 0);
+    }
+    int moved = countDiff(a, b);
+    printf("      title: %d samples differ between row 0 and row 1\n", moved);
+    check(moved > 40, "selecting the other menu row changes the screen");
+
+    /* ---- controls page -------------------------------------------------- */
+    {
+        WCanvas cv(FIELD_W, FIELD_H);
+        Renderer r;
+        r.DrawHowto(cv, *g_atlas);
+        cv.Update();
+        cv.SetPos(0, 0);
+        a.Clear(WPixel(0, 0, 0));
+        cv.BlitTo(a);
+
+        int blank = 0;
+        for (int y = 0; y < FIELD_H; y += 7)
+            for (int x = 0; x < FIELD_W; x += 7)
+                if ((DWORD)a[y][x] == 0) ++blank;
+        printf("      howto: %d blank samples\n", blank);
+        check(blank == 0, "the controls page fills the viewport");
+        if (const char *p = getenv("WF_DUMP_HOWTO")) dumpFrame(a, p);
+    }
+
+    /* ---- perk cards ----------------------------------------------------- */
+    World lp;
+    for (int n = 0; n < 5; ++n) {
+        lp.SpawnMonster(MON_GRUNT, lp.Hero().x, lp.Hero().y + 40.0f);
+        for (int i = 0; i < MAX_MONSTERS; ++i)
+            if (lp.Monsters()[i].alive) {
+                lp.DamageMonster(i, 100000, 0, lp.Hero().x, lp.Hero().y);
+                break;
+            }
+    }
+    check(lp.App() == APP_LEVELUP, "a level flips the world into the perk state");
+
+    {
+        Renderer r;
+        int items = 0;
+        renderInto(a, r, 2, lp, 0, &items);
+        printf("      perks: %d draw calls\n", items);
+        check(items > 20, "the perk cards submit their layers");
+    }
+    {
+        Renderer r;
+        renderInto(b, r, 2, lp, 2, 0);
+    }
+    int cards = countDiff(a, b);
+    if (const char *p = getenv("WF_DUMP_PERKS")) dumpFrame(a, p);
+    printf("      perks: %d samples differ between card 0 and card 2\n", cards);
+    check(cards > 60, "the selected perk card is highlighted");
+
+    /* ---- run summary (dead) --------------------------------------------- */
+    World dp;
+    for (int i = 0; i < 40 && !dp.State().gameover; ++i) {
+        dp.DamageHero(30);
+        for (int k = 0; k < 45 && dp.Hero().invuln > 0; ++k) dp.Step(noInput());
+    }
+    check(dp.State().gameover == 1, "the hero dies for the summary test");
+    {
+        WCanvas cv(FIELD_W, FIELD_H);
+        Renderer r;
+        r.Draw(cv, dp, *g_atlas);          /* Draw() dispatches the summary */
+        cv.Update();
+        cv.SetPos(0, 0);
+        a.Clear(WPixel(0, 0, 0));
+        cv.BlitTo(a);
+
+        int red = countColor(a, 0xE0, 0x3C, 0x3C, 30);
+        printf("      summary: %d red samples\n", red);
+        check(red > 20, "the defeat banner is drawn");
+        if (const char *p = getenv("WF_DUMP_OVER")) dumpFrame(a, p);
+    }
+
+    /* ---- run summary (won) ---------------------------------------------- */
+    World wp2;
+    wp2.StartWave(WIN_WAVES);
+    int guard = 0;
+    while (wp2.App() != APP_WIN && guard < 20000) {
+        ++guard;
+        wp2.Step(noInput());
+        if (wp2.PendingPerks() > 0) wp2.ChoosePerk(0);
+        for (int i = 0; i < MAX_MONSTERS; ++i)
+            if (wp2.Monsters()[i].alive)
+                wp2.DamageMonster(i, 100000, 0, wp2.Hero().x, wp2.Hero().y);
+    }
+    check(wp2.App() == APP_WIN, "clearing the last wave wins the run");
+    {
+        WCanvas cv(FIELD_W, FIELD_H);
+        Renderer r;
+        r.Draw(cv, wp2, *g_atlas);
+        cv.Update();
+        cv.SetPos(0, 0);
+        a.Clear(WPixel(0, 0, 0));
+        cv.BlitTo(a);
+
+        int gold2 = countColor(a, 0xFF, 0xD2, 0x3C, 40);
+        printf("      victory: %d gold samples\n", gold2);
+        check(gold2 > 20, "the victory banner is drawn");
+        if (const char *p = getenv("WF_DUMP_WIN")) dumpFrame(a, p);
+    }
+}
+
 /* ---------------------------------------------------------------------- */
 int main(void)
 {
@@ -1260,6 +1524,7 @@ int main(void)
     test_determinism();
     test_pools();
     test_hero_never_inside_walls();
+    test_progression();
 
     /* The renderer needs the sprite atlas, which needs a GDI font. */
     Atlas atlas;
@@ -1272,6 +1537,7 @@ int main(void)
         test_render_layers();
         test_render_effects();
         test_render_bigmap();
+        test_render_shell();
         test_render_stress();
         test_frame_budget();
     }

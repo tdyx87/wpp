@@ -6,6 +6,7 @@
 #include "wf_core.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 namespace wf {
@@ -39,6 +40,13 @@ static const int   SWING_RECOVER[4] = { 0,  9,  9, 16 };
 static const float SWING_RANGE[4]   = { 0.0f, 30.0f, 32.0f, 42.0f };
 static const float SWING_OFFSET[4]  = { 0.0f, 18.0f, 20.0f, 24.0f };
 static const float SWING_MUL[4]     = { 0.0f, 1.0f, 1.15f, 1.7f };
+
+/* perk: attack timers scaled by the hero's attack-speed multiplier */
+static int atkT(int base, float mul)
+{
+    int t = (int)(base * mul + 0.5f);
+    return t < 1 ? 1 : t;
+}
 
 static const float HERO_ACCEL    = 1.8f;
 static const float HERO_MAXSPD   = 5.0f;
@@ -124,6 +132,11 @@ Drop *World::allocDrop()
 
 World::World()
 {
+    m_bestWave  = 0;
+    m_bestKills = 0;
+    m_save      = 0;
+    m_offer[0] = m_offer[1] = m_offer[2] = -1;
+    for (int i = 0; i < PERK_COUNT; ++i) m_perkCount[i] = 0;
     Reset();
 }
 
@@ -153,8 +166,22 @@ void World::Reset()
     m_hero.facing   = FACE_DOWN;
     m_hero.alive    = 1;
 
+    /* perk buffs start neutral (Reset is called every run) */
+    m_hero.spdMul       = 1.0f;
+    m_hero.atkSpdMul    = 1.0f;
+    m_hero.critAdd      = 0.0f;
+    m_hero.dashCdMul    = 1.0f;
+    m_hero.spinCdMul    = 1.0f;
+    m_hero.spinRangeAdd = 0.0f;
+    m_hero.lifesteal    = 0;
+
     memset(&m_st, 0, sizeof(m_st));
-    m_st.wave = 0;
+    m_st.wave    = 0;
+    m_st.app     = APP_PLAY;
+    m_st.pending = 0;
+
+    for (int i = 0; i < PERK_COUNT; ++i) m_perkCount[i] = 0;
+    m_offer[0] = m_offer[1] = m_offer[2] = -1;
 
     buildMap();
     StartWave(1);
@@ -754,7 +781,7 @@ void World::stepHero(const Input &in)
             int step = (p.comboWindow > 0 && p.comboStep < 3) ? p.comboStep + 1 : 1;
             p.comboStep   = step;
             p.attackPhase = 1;
-            p.attackTimer = SWING_WINDUP[step];
+            p.attackTimer = atkT(SWING_WINDUP[step], p.atkSpdMul);
             p.comboWindow = 0;
             ++p.swingId;
         }
@@ -762,13 +789,17 @@ void World::stepHero(const Input &in)
         if (--p.attackTimer <= 0) {
             if (p.attackPhase == 1) {
                 p.attackPhase = 2;
-                p.attackTimer = SWING_ACTIVE[p.comboStep];
+                p.attackTimer = atkT(SWING_ACTIVE[p.comboStep], p.atkSpdMul);
                 AttackSweep();
                 AddFx(FX_SLASH, p.x, p.y, 0, 0, COL_BLADE);
+                if (p.lifesteal > 0 && p.hp < p.maxhp) {   /* FANG perk        */
+                    p.hp += p.lifesteal;
+                    if (p.hp > p.maxhp) p.hp = p.maxhp;
+                }
             } else if (p.attackPhase == 2) {
                 AttackSweep();
                 p.attackPhase = 3;
-                p.attackTimer = SWING_RECOVER[p.comboStep];
+                p.attackTimer = atkT(SWING_RECOVER[p.comboStep], p.atkSpdMul);
                 p.comboWindow = p.attackTimer + 12;
             } else {
                 p.attackPhase = 0;
@@ -787,7 +818,7 @@ void World::stepHero(const Input &in)
     /* ---- dash ----------------------------------------------------------- */
     if (in.dash && p.dashCd <= 0 && p.dashTimer <= 0) {
         p.dashTimer = DASH_LEN;
-        p.dashCd    = DASH_CD;
+        p.dashCd    = (int)(DASH_CD * p.dashCdMul);
         p.invuln    = DASH_LEN + 6;
         float dx = in.dx, dy = in.dy;
         float len = sqrtf(dx * dx + dy * dy);
@@ -803,7 +834,7 @@ void World::stepHero(const Input &in)
     /* ---- whirlwind ------------------------------------------------------ */
     if (in.spin && p.spinCd <= 0 && p.mp >= SPIN_COST) {
         p.spinTimer = SPIN_LEN;
-        p.spinCd    = SPIN_CD;
+        p.spinCd    = (int)(SPIN_CD * p.spinCdMul);
         p.mp       -= SPIN_COST;
         p.invuln    = SPIN_LEN;
         shake(10);
@@ -837,7 +868,8 @@ void World::stepHero(const Input &in)
 
     if (p.dashTimer <= 0) {
         float sp = sqrtf(p.vx * p.vx + p.vy * p.vy);
-        if (sp > HERO_MAXSPD) { p.vx = p.vx / sp * HERO_MAXSPD; p.vy = p.vy / sp * HERO_MAXSPD; }
+        float maxspd = HERO_MAXSPD * p.spdMul;      /* BOOTS perk raises cap */
+        if (sp > maxspd) { p.vx = p.vx / sp * maxspd; p.vy = p.vy / sp * maxspd; }
     }
 
     p.x += p.vx;
@@ -853,7 +885,7 @@ void World::stepHero(const Input &in)
                 Monster &m = m_mons[i];
                 if (!m.alive) continue;
                 float dx = m.x - p.x, dy = m.y - p.y;
-                float rr = SPIN_RANGE + m.radius;
+                float rr = SPIN_RANGE + p.spinRangeAdd + m.radius;   /* WHIRL perk */
                 if (dx * dx + dy * dy <= rr * rr)
                     DamageMonster(i, (int)(p.atk * 1.25f), 0, p.x, p.y);
             }
@@ -884,7 +916,9 @@ void World::AttackSweep()
         m.hitSwing = p.swingId;
 
         int dmg  = (int)(p.atk * SWING_MUL[step]);
-        int crit = (wf_randf(m_rng) < CRIT_CHANCE);
+        float ch = CRIT_CHANCE + p.critAdd;      /* EDGE perk raises crit      */
+        if (ch > 0.95f) ch = 0.95f;
+        int crit = (wf_randf(m_rng) < ch);
         if (crit) dmg = (int)(dmg * CRIT_MULT);
         dmg += (int)(wf_rand(m_rng) % 3u) - 1;
 
@@ -1001,9 +1035,11 @@ void World::DamageHero(int dmg)
     if (p.hp <= 0) {
         p.hp    = 0;
         p.alive = 0;
+        m_st.app      = APP_DEAD;
         m_st.gameover = 1;
         AddFx(FX_RING, p.x, p.y, 0, 0, COL_HP);
         shake(20);
+        endRun();
     }
 }
 
@@ -1011,6 +1047,7 @@ void World::gainExp(int n)
 {
     Player &p = m_hero;
     p.exp += n;
+    int gained = 0;
     while (p.exp >= p.expNext) {
         p.exp -= p.expNext;
         ++p.level;
@@ -1020,11 +1057,132 @@ void World::gainExp(int n)
         p.maxmp   += 6;
         p.mp       = p.maxmp;
         p.atk     += 3;
-        m_st.levelFlash = 70;
+        ++gained;
         AddFx(FX_RING, p.x, p.y, 0, 0, COL_EXP);
         shake(5);
     }
+    m_st.levelFlash = 70;
+
+    /* every level offers a pick-one-of-three perk; the shell pauses while a
+       pick is owed (so the sim itself keeps running for headless play). */
+    if (gained > 0) {
+        if (m_st.pending == 0) rollOffers();
+        m_st.pending += gained;
+        m_st.app = APP_LEVELUP;
+    }
 }
+
+/* -------------------------------------------------------- perks (product) */
+
+void World::applyPerk(int perk)
+{
+    Player &p = m_hero;
+    if (perk < 0 || perk >= PERK_COUNT) return;
+    ++m_perkCount[perk];
+
+    switch (perk) {
+    case PERK_BLADE: p.atk          += 5;                          break;
+    case PERK_IRON:  p.maxhp        += 26; p.hp += 26;             break;
+    case PERK_BOOTS: p.spdMul       += 0.12f;
+                    if (p.spdMul > 1.8f) p.spdMul = 1.8f;          break;
+    case PERK_HASTE: p.atkSpdMul    -= 0.10f;
+                    if (p.atkSpdMul < 0.5f) p.atkSpdMul = 0.5f;    break;
+    case PERK_EDGE:  p.critAdd      += 0.06f;
+                    if (p.critAdd > 0.70f) p.critAdd = 0.70f;      break;
+    case PERK_FANG:  p.lifesteal    += 2;                          break;
+    case PERK_WIND:  p.dashCdMul    -= 0.18f;
+                    if (p.dashCdMul < 0.4f) p.dashCdMul = 0.4f;    break;
+    case PERK_WHIRL: p.spinCdMul    -= 0.15f;
+                    if (p.spinCdMul < 0.4f) p.spinCdMul = 0.4f;
+                    p.spinRangeAdd  += 8.0f;                       break;
+    default:                                                  break;
+    }
+
+    if (p.hp > p.maxhp) p.hp = p.maxhp;
+    m_st.levelFlash = 24;
+    AddFx(FX_RING, p.x, p.y, 0, 0, COL_EXP);
+    shake(3);
+}
+
+/* Pick three distinct perks, weighting the less-taken ones so the offers feel
+   varied across a run.  Deterministic: driven by the world's xorshift rng. */
+void World::rollOffers()
+{
+    bool used[PERK_COUNT];
+    for (int k = 0; k < PERK_COUNT; ++k) used[k] = false;
+
+    for (int s = 0; s < 3; ++s) {
+        int w[PERK_COUNT], total = 0;
+        for (int k = 0; k < PERK_COUNT; ++k) {
+            if (used[k]) { w[k] = 0; continue; }
+            w[k] = 4 - 2 * m_perkCount[k];
+            if (w[k] < 1) w[k] = 1;
+            total += w[k];
+        }
+        int r = (int)(wf_rand(m_rng) % (unsigned)total);
+        int pick = -1;
+        for (int k = 0; k < PERK_COUNT; ++k) {
+            if (used[k]) continue;
+            r -= w[k];
+            if (r < 0) { pick = k; break; }
+        }
+        if (pick < 0)
+            for (int k = 0; k < PERK_COUNT; ++k) if (!used[k]) { pick = k; break; }
+        used[pick] = true;
+        m_offer[s] = pick;
+    }
+}
+
+void World::ChoosePerk(int slot)
+{
+    if (m_st.app != APP_LEVELUP || m_st.pending <= 0) return;
+    if (slot < 0 || slot > 2) slot = 0;
+    int perk = m_offer[slot];
+    applyPerk(perk);
+    --m_st.pending;
+    if (m_st.pending > 0) {
+        rollOffers();
+    } else {
+        m_st.app = APP_PLAY;
+        m_offer[0] = m_offer[1] = m_offer[2] = -1;
+    }
+}
+
+/* ---------------------------------------------------------------- save */
+
+void World::LoadSave()
+{
+    FILE *f = fopen("warfire.sav", "r");
+    if (!f) return;
+    int wv = 0, kl = 0;
+    if (fscanf(f, "%d %d", &wv, &kl) == 2) {
+        if (wv >= 0 && wv < 1000000) m_bestWave  = wv;
+        if (kl >= 0 && kl < 1000000) m_bestKills = kl;
+    }
+    fclose(f);
+}
+
+void World::SaveSave()
+{
+    FILE *f = fopen("warfire.sav", "w");
+    if (!f) return;
+    fprintf(f, "%d %d\n", m_bestWave, m_bestKills);
+    fclose(f);
+}
+
+/* Update the high score and persist it if this run beat it.  Only touches the
+   file when EnableSave(1) was set -- the headless tests never write one. */
+void World::endRun()
+{
+    if (m_st.wave > m_bestWave ||
+        (m_st.wave == m_bestWave && m_st.kills > m_bestKills)) {
+        m_bestWave  = m_st.wave;
+        m_bestKills = m_st.kills;
+        if (m_save) SaveSave();
+    }
+}
+
+
 
 /* ---------------------------------------------------------------- effects */
 
@@ -1131,14 +1289,25 @@ void World::stepWave()
         return;
     }
 
-    if (LiveMonsters() == 0) StartWave(m_st.wave + 1);
+    if (LiveMonsters() == 0) {
+        if (m_st.wave >= WIN_WAVES) {
+            m_st.app = APP_WIN;
+            m_st.gameover = 1;
+            m_st.banner = 0;
+            endRun();
+        } else {
+            StartWave(m_st.wave + 1);
+        }
+    }
 }
 
 /* ------------------------------------------------------------------- step */
 
 void World::Step(const Input &in)
 {
-    if (m_st.gameover) return;
+    if (m_st.gameover) return;    /* DEAD / WIN are frozen; LEVELUP is driven
+                                     by the shell, which simply stops calling
+                                     Step while a perk pick is owed          */
 
     ++m_st.frame;
 

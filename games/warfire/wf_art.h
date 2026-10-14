@@ -65,6 +65,8 @@ public:
     WBitmap *Label(int id) const;
     WBitmap *Slash(int facing) const;
     WBitmap *Ring(int i) const;         /* 0 = small, 1 = large            */
+    WBitmap *TitleArt() const { return m_title; }   /* 72 px menu headline */
+    int      TitleW()   const { return m_titleW; }
     WBitmap *Spark() const;             /* a 3x3 additive dot              */
     WBitmap *Coin() const;
     WBitmap *Potion() const;
@@ -85,6 +87,8 @@ private:
     WBitmap *m_label[WF_LABEL_COUNT];
     WBitmap *m_slash[FACE_COUNT];
     WBitmap *m_ring[2];
+    WBitmap *m_title;
+    int      m_titleW;
     WBitmap *m_spark;
     WBitmap *m_coin;
     WBitmap *m_potion;
