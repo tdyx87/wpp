@@ -134,46 +134,43 @@ else()
 endif()
 
 # ============================================================================
-#  Guofeng -- headless unit test for the isometric prototype
+#  Lawn Defense -- headless unit test for the cartoon lawn prototype
 # ----------------------------------------------------------------------------
-#  gf_core (the projection, the scene, the camera) is driven directly; the
-#  atlas and gf_render are driven into an off-screen WCanvas and the pixels are
-#  read back.  The atlas needs a GDI font for its labels, so the atlas and
-#  render sections are skipped (not failed) if that is unavailable.
-#
-#  Baking the ground sheet is the slow part: 2048x1024 pixels of procedural
-#  texture, plus a thumbnail pass.  Hence the longer timeout.
+#  pvz_core (the grid, the plants, the zombies) is driven directly; the atlas
+#  and pvz_render are driven into an off-screen WCanvas and the pixels are read
+#  back.  The atlas needs a GDI font for its labels, so the render sections are
+#  skipped (not failed) if that is unavailable.
 # ============================================================================
-if(TARGET guofeng_core)
+if(TARGET pvz_core)
 
-    add_executable(guofeng_test test_guofeng.cpp)
+    add_executable(pvz_test test_pvz.cpp)
 
-    target_include_directories(guofeng_test
+    target_include_directories(pvz_test
         PRIVATE
             "${CMAKE_SOURCE_DIR}/include"
-            "${CMAKE_SOURCE_DIR}/games/guofeng"
+            "${CMAKE_SOURCE_DIR}/games/pvz"
     )
 
-    target_compile_definitions(guofeng_test
+    target_compile_definitions(pvz_test
         PRIVATE
             _CONSOLE
             _CRT_SECURE_NO_WARNINGS
             $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
     )
 
-    target_link_libraries(guofeng_test PRIVATE guofeng_core)
+    target_link_libraries(pvz_test PRIVATE pvz_core)
 
-    wpp16_apply_target_settings(guofeng_test)
+    wpp16_apply_target_settings(pvz_test)
 
-    add_test(NAME guofeng.logic COMMAND guofeng_test)
+    add_test(NAME pvz.logic COMMAND pvz_test)
 
-    set_tests_properties(guofeng.logic PROPERTIES
+    set_tests_properties(pvz.logic PROPERTIES
         LABELS "game"
-        TIMEOUT 120
+        TIMEOUT 90
     )
 
-    message(STATUS "tests:  ${CMAKE_CURRENT_SOURCE_DIR} -> ${WPP16_RUNTIME_OUTPUT_DIR}/guofeng_test.exe")
+    message(STATUS "tests:  ${CMAKE_CURRENT_SOURCE_DIR} -> ${WPP16_RUNTIME_OUTPUT_DIR}/pvz_test.exe")
 
 else()
-    message(STATUS "tests:  guofeng_test skipped (WPP16_BUILD_GAME=OFF)")
+    message(STATUS "tests:  pvz_test skipped (WPP16_BUILD_GAME=OFF)")
 endif()

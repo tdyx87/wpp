@@ -100,7 +100,7 @@ endif()
 if(WPP16_BUILD_GAME)
     add_subdirectory(games/neonbarrage)
     add_subdirectory(games/warfire)
-    add_subdirectory(games/guofeng)
+    add_subdirectory(games/pvz)
 endif()
 
 if(WPP16_BUILD_TESTS)
