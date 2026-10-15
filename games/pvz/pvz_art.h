@@ -43,7 +43,9 @@ enum {
     PVZ_ASCII_COUNT = ASCII_LAST - ASCII_FIRST + 1,
 
     PEA_W = 12,
-    PEA_H = 12
+    PEA_H = 12,
+
+    SPLAT_FRAMES = 3             /* fresh, spread, fading */
 };
 
 class Atlas {
@@ -60,11 +62,17 @@ public:
     /* ---- world -------------------------------------------------------- */
     WBitmap *Background() const { return m_bg; }    /* 800x600 lawn+bar   */
     WBitmap *House() const { return m_house; }      /* the left house      */
+    WBitmap *TitleBg() const { return m_titlebg; }  /* sky + garden menu   */
 
     /* ---- actors ------------------------------------------------------- */
     WBitmap *Plant(int kind) const;                 /* 1..PL_COUNT-1 */
+    /* The wall-nut is baked in three damage stages; this picks one from
+       the plant's remaining hp so chewing is visible.  Everything else
+       forwards to Plant(). */
+    WBitmap *PlantHp(int kind, int hp) const;
     WBitmap *Zombie(int frame, int eating) const;   /* frame 0/1, eat 0/1 */
     WBitmap *Pea() const { return m_pea; }
+    WBitmap *Splat(int frame) const;                /* 0..SPLAT_FRAMES-1 */
     WBitmap *Shadow() const { return m_shadow; }    /* BLIT_SUBTRACT blob  */
     WBitmap *Sun() const { return m_sun; }          /* the HUD sun coin    */
 
@@ -75,26 +83,35 @@ public:
     int      LabelW(int id) const;
     WBitmap *Ascii(int c) const;                    /* 32..126 */
     int      AsciiW(int c) const;
+    WBitmap *Cloud() const { return m_cloud; }      /* drifting menu cloud */
+    WBitmap *Mote() const { return m_mote; }        /* drifting menu mote  */
 
 private:
     WBitmap *bakeBackground();
     WBitmap *bakeHouse();
+    WBitmap *bakeTitleBg();
     WBitmap *bakePeashooter();
     WBitmap *bakeSunflower();
-    WBitmap *bakeWallnut();
+    WBitmap *bakeWallnut(int stage);
     WBitmap *bakeZombie(int frame, int eating);
     WBitmap *bakePea();
+    WBitmap *bakeSplat(int frame);
     WBitmap *bakeShadow();
     WBitmap *bakeSun();
+    WBitmap *bakeCloud();
+    WBitmap *bakeMote();
     WBitmap *bakeSeed(int i);
     WBitmap *bakePlaque(int which);
     bool     bakeUi();
 
     WBitmap *m_bg;
     WBitmap *m_house;
+    WBitmap *m_titlebg;
     WBitmap *m_plant[PL_COUNT];
+    WBitmap *m_wnut[3];                       /* wall-nut damage stages */
     WBitmap *m_zombie[ZOMBIE_FRAMES][ZOMBIE_EATS];
     WBitmap *m_pea;
+    WBitmap *m_splat[SPLAT_FRAMES];
     WBitmap *m_shadow;
     WBitmap *m_sun;
     WBitmap *m_seed[PL_COUNT - 1];
@@ -103,6 +120,8 @@ private:
     int      m_labelW[PVZ_LABEL_COUNT];
     WBitmap *m_ascii[PVZ_ASCII_COUNT];
     int      m_asciiW[PVZ_ASCII_COUNT];
+    WBitmap *m_cloud;
+    WBitmap *m_mote;
 
     bool m_ok;
 };

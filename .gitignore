@@ -36,3 +36,4 @@ CMakeUserPresets.json
 
 # A stray Windows device-name artifact (from a "> nul" redirect mishap)
 /nul
+_out/

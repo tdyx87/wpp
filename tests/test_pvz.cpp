@@ -46,6 +46,7 @@ static int CHr(WORD c) { return (c >> 11) & 0x1f; }
 static int CHg(WORD c) { return (c >> 5) & 0x3f; }
 static int CHb(WORD c) { return c & 0x1f; }
 static int isGreenish(WORD c) { return CHg(c) > CHr(c) && CHg(c) > CHb(c); }
+static int isBlueish(WORD c) { return CHb(c) > CHr(c) && CHg(c) >= CHb(c) - 2; }
 
 /* Readback: a single RGB565 pixel. */
 static WORD PX(WBitmap &b, int x, int y) { return b[y][x].color; }
@@ -62,6 +63,31 @@ static int countRect(WBitmap &b, int x0, int y0, int w, int h, int (*pred)(WORD)
         }
     }
     return n;
+}
+
+/* How many pixels two same-sized sprites disagree on. */
+static int spriteDiff(WBitmap *a, WBitmap *b)
+{
+    if (!a || !b) return -1;
+    const int w = a->GetW() < b->GetW() ? a->GetW() : b->GetW();
+    const int h = a->GetH() < b->GetH() ? a->GetH() : b->GetH();
+    int d = 0;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            if ((*a)[y][x].color != (*b)[y][x].color) ++d;
+    return d;
+}
+
+/* In RGB565 the green channel has an extra bit, so "brown" and "gold" both
+   read as green-dominant by channel dominance.  Match the exact baked colour
+   with a small tolerance instead: the seed bar and the title plaque are drawn
+   crisp (above the dim), so their fills are near-exact. */
+static int isNear(WORD a, WORD b, int tol)
+{
+    int dr = CHr(a) - CHr(b); if (dr < 0) dr = -dr;
+    int dg = CHg(a) - CHg(b); if (dg < 0) dg = -dg;
+    int db = CHb(a) - CHb(b); if (db < 0) db = -db;
+    return dr <= tol && dg <= tol && db <= tol;
 }
 
 static Atlas   *g_atlas = 0;
@@ -134,6 +160,66 @@ static void test_atlas(void)
     check(asciiOk, "ASCII 32..126 fully baked");
     check(g_atlas->Ascii(31) == 0 && g_atlas->Ascii(127) == 0,
           "Ascii() refuses out-of-range codes");
+
+    /* ---- the shaded-art upgrade ----------------------------------------
+       Cel shading is the visible difference between the flat first pass and
+       this one: every sprite must now carry many tones, not one fill. */
+    if (ps) {
+        const WORD base = WPixel((DWORD)0x6BBB46).color;   /* C_PEASH */
+        const WORD mask = WPixel((DWORD)0xFF00FF).color;
+        int shaded = 0;
+        static WORD seen[96];
+        int ns = 0;
+        for (int y = 0; y < ps->GetH(); ++y)
+            for (int x = 0; x < ps->GetW(); ++x) {
+                const WORD c = PX(*ps, x, y);
+                if (c == mask) continue;
+                if (!isNear(c, base, 6)) ++shaded;
+                int k = 0;
+                for (; k < ns; ++k) if (seen[k] == c) break;
+                if (k == ns && ns < 96) seen[ns++] = c;
+            }
+        check(shaded > 400, "the peashooter is cel-shaded, not flat");
+        check(ns >= 8, "the peashooter carries at least 8 distinct tones");
+    }
+
+    /* the wall-nut is baked in three damage stages picked by hp */
+    WBitmap *w0 = g_atlas->PlantHp(PL_WALLNUT, PLANT_HP_WALLNUT);
+    WBitmap *w1 = g_atlas->PlantHp(PL_WALLNUT, PLANT_HP_WALLNUT * 2 / 3);
+    WBitmap *w2 = g_atlas->PlantHp(PL_WALLNUT, 1);
+    check(w0 && w1 && w2, "the wall-nut has three damage stages");
+    check(w0->GetW() == w2->GetW() && w0->GetH() == w2->GetH(),
+          "every stage shares the wall-nut's art box");
+    check(spriteDiff(w0, w1) > 5 && spriteDiff(w1, w2) > 40,
+          "each stage adds visible damage");
+    check(g_atlas->PlantHp(PL_PEASHOOTER, 10) == g_atlas->Plant(PL_PEASHOOTER),
+          "PlantHp forwards for the plants that do not crack");
+
+    /* the splat is a three-frame stain, not a green square */
+    int splatOk = (g_atlas->Splat(0) && g_atlas->Splat(1) && g_atlas->Splat(2));
+    check(splatOk, "splat frames baked");
+    check(spriteDiff(g_atlas->Splat(0), g_atlas->Splat(2)) > 20,
+          "the splat evolves over its lifetime");
+    check(spriteDiff(g_atlas->Splat(0), g_atlas->Splat(0)) == 0,
+          "baking is deterministic");
+
+    /* the zombie keeps its walk cycle and its chew */
+    check(spriteDiff(g_atlas->Zombie(0, 0), g_atlas->Zombie(1, 0)) > 150,
+          "the zombie walk frames are distinct");
+    check(spriteDiff(g_atlas->Zombie(0, 0), g_atlas->Zombie(0, 1)) > 150,
+          "the zombie chew frame is distinct");
+
+    /* the title backdrop: sky overhead, the same lawn below */
+    WBitmap *tb = g_atlas->TitleBg();
+    check(tb && tb->GetW() == FIELD_W && tb->GetH() == FIELD_H,
+          "the title backdrop is baked");
+    if (tb) {
+        const int sky = countRect(*tb, 0, 0, FIELD_W, 80, isBlueish);
+        const int law = countRect(*tb, 0, FIELD_H - 120, FIELD_W, 120, isGreenish);
+        check(sky > 40000, "the title backdrop opens on sky");
+        check(law > 60000, "the title backdrop sits on the same lawn");
+    }
+    check(g_atlas->Cloud() && g_atlas->Mote(), "menu weather baked");
 }
 
 /* ====================================================================== */
@@ -351,17 +437,6 @@ static void test_win(void)
 /* ====================================================================== */
 static int isDark(WORD c)  { int m = CHr(c); if (CHg(c) > m) m = CHg(c); if (CHb(c) > m) m = CHb(c); return m < 18; }
 
-/* In RGB565 the green channel has an extra bit, so "brown" and "gold" both
-   read as green-dominant by channel dominance.  Match the exact baked colour
-   with a small tolerance instead: the seed bar and the title plaque are drawn
-   crisp (above the dim), so their fills are near-exact. */
-static int isNear(WORD a, WORD b, int tol)
-{
-    int dr = CHr(a) - CHr(b); if (dr < 0) dr = -dr;
-    int dg = CHg(a) - CHg(b); if (dg < 0) dg = -dg;
-    int db = CHb(a) - CHb(b); if (db < 0) db = -db;
-    return dr <= tol && dg <= tol && db <= tol;
-}
 static int countNear(WBitmap &b, int x0, int y0, int w, int h, WORD target, int tol)
 {
     int n = 0;
@@ -437,6 +512,8 @@ static void test_render(void)
     const WORD gold = WPixel((DWORD)0xF2D98A).color;   /* the title plaque fill */
     const int goldc = countNear(title, (FIELD_W - 520) / 2, 132, 520, 96, gold, 5);
     check(goldc > 3000, "the title gold plaque is present");
+    const int skytop = countRect(title, 0, 0, FIELD_W, 60, isBlueish);
+    check(skytop > 30000, "the title screen shows sky");
 
     WBitmap howto;
     shotAtlas(howto, 1);
