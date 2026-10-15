@@ -82,6 +82,7 @@ private:
     unsigned  m_tick;
     int       m_prevAct[ACT_COUNT];
     int       m_mx, m_my, m_click;
+    int       m_collectFlash;
 };
 
 BEGIN_MAP_MESSAGE(LawnDef, WApplication)
@@ -98,7 +99,7 @@ LawnDef::LawnDef(HINSTANCE hInst)
       m_screen(SCR_TITLE),
       m_menuSel(0),
       m_tick(0),
-      m_mx(0), m_my(0), m_click(0)
+      m_mx(0), m_my(0), m_click(0), m_collectFlash(0)
 {
     for (int i = 0; i < ACT_COUNT; ++i) m_prevAct[i] = 0;
 }
@@ -217,14 +218,21 @@ void LawnDef::Idle()
     default: {                              /* SCR_GAME */
         m_lawn.Step();
         if (m_click) {
-            const int seed = m_lawn.SeedIdx(m_mx, m_my);
-            if (seed >= 0) {
-                m_lawn.SetSel(seed + 1);    /* seeds are PlantKind seed+1 */
+            /* Collection has priority over planting: a player clicking a sun
+               should never accidentally select a packet or plant underneath. */
+            if (m_lawn.TryCollectSun(m_mx, m_my)) {
+                m_collectFlash = 18;
             } else {
-                int c, r;
-                if (m_lawn.CellAt(m_mx, m_my, c, r)) m_lawn.TryPlant(c, r);
+                const int seed = m_lawn.SeedIdx(m_mx, m_my);
+                if (seed >= 0) {
+                    m_lawn.SetSel(seed + 1);    /* seeds are PlantKind seed+1 */
+                } else {
+                    int c, r;
+                    if (m_lawn.CellAt(m_mx, m_my, c, r)) m_lawn.TryPlant(c, r);
+                }
             }
         }
+        if (m_collectFlash > 0) --m_collectFlash;
         if (ActionDown(ACT_RESET, 'R')) m_lawn.Reset(7u);
         m_renderer.Draw(*m_canvas, m_lawn, m_atlas);
         break;

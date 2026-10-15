@@ -44,6 +44,7 @@ static const unsigned long
     C_BRICK = 0xB8A784, C_GLASS_HI = 0xC8ECF7, C_GLASS_LO = 0x74BEDA,
     /* peashooter */
     C_PEASH = 0x6BBB46, C_PEASH_DK = 0x3F8B2E, C_PEASH_LT = 0x93DB6B,
+    C_ICE = 0x55BDE8, C_ICE_DK = 0x3184B2, C_ICE_LT = 0xA4E8FF,
     C_STEM = 0x4E9C39, C_STEM_LT = 0x6FC258, C_STEM_DK = 0x3A7326,
     C_LEAF = 0x57A83C, C_LEAF_LT = 0x7FCC58, C_LEAF_DK = 0x3E7A2A,
     /* sunflower */
@@ -328,13 +329,16 @@ static void paintLawn(WBitmap &b, int y0, int rows)
 
 Atlas::Atlas() : m_ok(false)
 {
-    m_bg = m_house = m_titlebg = m_pea = m_shadow = m_sun = 0;
+    m_bg = m_house = m_titlebg = m_pea = m_icepea = m_shadow = m_sun = 0;
     m_cloud = m_mote = 0;
     for (int i = 0; i < PL_COUNT; ++i) m_plant[i] = 0;
     for (int i = 0; i < 3; ++i) m_wnut[i] = 0;
     for (int f = 0; f < ZOMBIE_FRAMES; ++f)
-        for (int e = 0; e < ZOMBIE_EATS; ++e) m_zombie[f][e] = 0;
+        for (int e = 0; e < ZOMBIE_EATS; ++e)
+            for (int k = 0; k < ZOMBIE_KINDS; ++k)
+                for (int c = 0; c < ZOMBIE_CHILL; ++c) m_zombie[f][e][k][c] = 0;
     for (int i = 0; i < SPLAT_FRAMES; ++i) m_splat[i] = 0;
+    for (int i = 0; i < BLAST_FRAMES; ++i) m_blast[i] = 0;
     for (int i = 0; i < PL_COUNT - 1; ++i) m_seed[i] = 0;
     for (int i = 0; i < 3; ++i) m_plaque[i] = 0;
     for (int i = 0; i < PVZ_LABEL_COUNT; ++i) { m_label[i] = 0; m_labelW[i] = 0; }
@@ -349,6 +353,7 @@ void Atlas::Destroy()
     delete m_house;   m_house = 0;
     delete m_titlebg; m_titlebg = 0;
     delete m_pea;     m_pea = 0;
+    delete m_icepea;  m_icepea = 0;
     delete m_shadow;  m_shadow = 0;
     delete m_sun;     m_sun = 0;
     delete m_cloud;   m_cloud = 0;
@@ -359,8 +364,14 @@ void Atlas::Destroy()
     for (int i = 0; i < PL_COUNT; ++i) { delete m_plant[i]; m_plant[i] = 0; }
     for (int i = 0; i < 3; ++i) { delete m_wnut[i]; m_wnut[i] = 0; }
     for (int f = 0; f < ZOMBIE_FRAMES; ++f)
-        for (int e = 0; e < ZOMBIE_EATS; ++e) { delete m_zombie[f][e]; m_zombie[f][e] = 0; }
+        for (int e = 0; e < ZOMBIE_EATS; ++e)
+            for (int k = 0; k < ZOMBIE_KINDS; ++k)
+                for (int c = 0; c < ZOMBIE_CHILL; ++c) {
+                    delete m_zombie[f][e][k][c];
+                    m_zombie[f][e][k][c] = 0;
+                }
     for (int i = 0; i < SPLAT_FRAMES; ++i) { delete m_splat[i]; m_splat[i] = 0; }
+    for (int i = 0; i < BLAST_FRAMES; ++i) { delete m_blast[i]; m_blast[i] = 0; }
     for (int i = 0; i < PL_COUNT - 1; ++i) { delete m_seed[i]; m_seed[i] = 0; }
     for (int i = 0; i < 3; ++i) { delete m_plaque[i]; m_plaque[i] = 0; }
     for (int i = 0; i < PVZ_LABEL_COUNT; ++i) { delete m_label[i]; m_label[i] = 0; }
@@ -388,12 +399,20 @@ WBitmap *Atlas::Splat(int frame) const
     return m_splat[frame];
 }
 
-WBitmap *Atlas::Zombie(int frame, int eating) const
+WBitmap *Atlas::Zombie(int frame, int eating, int kind, int chilled) const
 {
     if (frame < 0) frame = 0;
     if (frame >= ZOMBIE_FRAMES) frame = ZOMBIE_FRAMES - 1;
-    if (eating) frame = frame;                 /* eat reuses a walk frame */
-    return m_zombie[frame][eating ? 1 : 0];
+    if (kind < 0 || kind >= ZOMBIE_KINDS) kind = ZK_NORMAL;
+    if (eating) frame = frame;
+    return m_zombie[frame][eating ? 1 : 0][kind][chilled ? 1 : 0];
+}
+
+WBitmap *Atlas::Blast(int frame) const
+{
+    if (frame < 0) frame = 0;
+    if (frame >= BLAST_FRAMES) frame = BLAST_FRAMES - 1;
+    return m_blast[frame];
 }
 
 WBitmap *Atlas::Seed(int i) const
@@ -419,15 +438,21 @@ bool Atlas::Build()
     m_bg     = bakeBackground();
     m_house  = bakeHouse();
     m_titlebg = bakeTitleBg();
-    m_plant[PL_PEASHOOTER] = bakePeashooter();
+    m_plant[PL_PEASHOOTER] = bakePeashooter(0);
     m_plant[PL_SUNFLOWER]  = bakeSunflower();
     for (int s = 0; s < 3; ++s) m_wnut[s] = bakeWallnut(s);
-    m_plant[PL_WALLNUT]    = m_wnut[0];
+    m_plant[PL_WALLNUT] = m_wnut[0];
+    m_plant[PL_SNOWPEA] = bakePeashooter(1);
+    m_plant[PL_CHERRY] = bakeCherry();
     for (int f = 0; f < ZOMBIE_FRAMES; ++f)
         for (int e = 0; e < ZOMBIE_EATS; ++e)
-            m_zombie[f][e] = bakeZombie(f, e);
-    m_pea    = bakePea();
+            for (int k = 0; k < ZOMBIE_KINDS; ++k)
+                for (int c = 0; c < ZOMBIE_CHILL; ++c)
+                    m_zombie[f][e][k][c] = bakeZombie(f, e, k, c);
+    m_pea = bakePea(0);
+    m_icepea = bakePea(1);
     for (int i = 0; i < SPLAT_FRAMES; ++i) m_splat[i] = bakeSplat(i);
+    for (int i = 0; i < BLAST_FRAMES; ++i) m_blast[i] = bakeBlast(i);
     m_shadow = bakeShadow();
     m_sun    = bakeSun();
     m_plaque[0] = bakePlaque(0);
@@ -543,8 +568,11 @@ static WBitmap *newMasked(int w, int h)
     return b;
 }
 
-WBitmap *Atlas::bakePeashooter()          /* 64 x 80 */
+WBitmap *Atlas::bakePeashooter(int snow) /* 64 x 80 */
 {
+    const unsigned long head = snow ? C_ICE : C_PEASH;
+    const unsigned long headLt = snow ? C_ICE_LT : C_PEASH_LT;
+    const unsigned long headDk = snow ? C_ICE_DK : C_PEASH_DK;
     WBitmap *b = newMasked(64, 80);
     /* the leaf pair, lit from the upper left */
     discShade(*b, 14, 66, 16, 8, C_LEAF, C_LEAF_LT, C_LEAF_DK);
@@ -556,15 +584,15 @@ WBitmap *Atlas::bakePeashooter()          /* 64 x 80 */
     fillRect(*b, 24, 74, 11, 5, C_STEM_DK);
     fillRect(*b, 24, 74, 11, 2, blend(C_STEM_DK, 0xFFFFFF, 0.25f));
     /* the head */
-    discShade(*b, 29, 36, 22, 22, C_PEASH, C_PEASH_LT, C_PEASH_DK);
+    discShade(*b, 29, 36, 22, 22, head, headLt, headDk);
     /* the snout: a tube, lit on top, with a dark bore */
-    fillRect(*b, 42, 18, 16, 22, C_PEASH_DK);
-    fillRect(*b, 42, 18, 16, 3, C_PEASH);
-    fillRect(*b, 42, 37, 16, 3, C_PEASH_DK);
-    discShade(*b, 57, 29, 7, 11, C_PEASH_DK, C_PEASH, C_PEASH_DK);
+    fillRect(*b, 42, 18, 16, 22, headDk);
+    fillRect(*b, 42, 18, 16, 3, head);
+    fillRect(*b, 42, 37, 16, 3, headDk);
+    discShade(*b, 57, 29, 7, 11, headDk, head, headDk);
     disc(*b, 58, 29, 5, 9, 0x243C18);
     disc(*b, 58, 27, 3, 6, blend(0x243C18, 0xFFFFFF, 0.18f));
-    fillRect(*b, 40, 40, 10, 2, C_PEASH_DK);          /* the mouth seam */
+    fillRect(*b, 40, 40, 10, 2, headDk);             /* the mouth seam */
     /* eyes: almond, pupil, glint; plus heavy cartoon brows */
     disc(*b, 20, 27, 5, 6, C_WHITE);
     disc(*b, 21, 28, 2, 3, C_NEARBLACK);
@@ -572,13 +600,13 @@ WBitmap *Atlas::bakePeashooter()          /* 64 x 80 */
     disc(*b, 33, 25, 5, 6, C_WHITE);
     disc(*b, 34, 26, 2, 3, C_NEARBLACK);
     pxb(*b, 33, 24, C_WHITE);
-    fillRect(*b, 15, 20, 7, 2, C_PEASH_DK);
-    fillRect(*b, 30, 18, 7, 2, C_PEASH_DK);
+    fillRect(*b, 15, 20, 7, 2, headDk);
+    fillRect(*b, 30, 18, 7, 2, headDk);
     /* cheeks */
-    pxb(*b, 13, 37, C_PEASH_DK); pxb(*b, 14, 38, C_PEASH_DK);
-    pxb(*b, 44, 36, C_PEASH_DK); pxb(*b, 45, 37, C_PEASH_DK);
-    /* two-tone cel outline: dark green inside, near black outside */
-    celOutline(*b, 0x1E4D14, 1);
+    pxb(*b, 13, 37, headDk); pxb(*b, 14, 38, headDk);
+    pxb(*b, 44, 36, headDk); pxb(*b, 45, 37, headDk);
+    /* two-tone cel outline: inner hue plus near-black outside */
+    celOutline(*b, snow ? 0x1A5574 : 0x1E4D14, 1);
     celOutline(*b, 0x0E2A0A, 1);
     return b;
 }
@@ -667,14 +695,35 @@ WBitmap *Atlas::bakeWallnut(int stage)     /* 58 x 66 */
     return b;
 }
 
+WBitmap *Atlas::bakeCherry()
+{
+    WBitmap *b = newMasked(58, 66);
+    /* forked stem, leaf and two glossy cherry heads */
+    fillRect(*b, 27, 13, 3, 15, C_STEM_DK);
+    fillRect(*b, 27, 13, 1, 14, C_STEM_LT);
+    fillRect(*b, 28, 22, 11, 3, C_STEM);
+    discShade(*b, 16, 42, 13, 14, 0xD8333B, 0xFF7771, 0x8F1827);
+    discShade(*b, 40, 42, 13, 14, 0xD8333B, 0xFF7771, 0x8F1827);
+    disc(*b, 12, 36, 3, 5, C_WHITE);
+    disc(*b, 36, 36, 3, 5, C_WHITE);
+    discShade(*b, 36, 17, 8, 4, C_LEAF, C_LEAF_LT, C_LEAF_DK);
+    pxb(*b, 42, 18, C_LEAF_DK);
+    celOutline(*b, 0x7E1420, 1);
+    celOutline(*b, 0x260A0E, 1);
+    return b;
+}
+
 /* ------------------------------------------------------------------- props */
 
-WBitmap *Atlas::bakePea()
+WBitmap *Atlas::bakePea(int icy)
 {
+    const unsigned long base = icy ? C_ICE : C_PEA;
+    const unsigned long light = icy ? C_ICE_LT : C_PEA_LT;
+    const unsigned long dark = icy ? C_ICE_DK : C_PEA_DK;
     WBitmap *b = newMasked(PEA_W, PEA_H);
-    discShade(*b, 6, 6, 5, 5, C_PEA, C_PEA_LT, C_PEA_DK);
-    disc(*b, 4, 4, 2, 2, blend(C_PEA_LT, 0xFFFFFF, 0.55f));   /* the specular */
-    celOutline(*b, 0x356B18, 1);
+    discShade(*b, 6, 6, 5, 5, base, light, dark);
+    disc(*b, 4, 4, 2, 2, blend(light, 0xFFFFFF, 0.55f));
+    celOutline(*b, icy ? 0x1A5574 : 0x356B18, 1);
     return b;
 }
 
@@ -710,8 +759,35 @@ WBitmap *Atlas::bakeSun()
     return b;
 }
 
-/*  The pea splat, three frames: fresh, spread, fading.  Painted with a dark
- *  rim so it reads against the lawn; previously a plain green square. */
+WBitmap *Atlas::bakeBlast(int frame)
+{
+    WBitmap *b = newMasked(112, 112);
+    const int radius = 22 + frame * 10;
+    const int cx = 56, cy = 56;
+    static const int rx[12] = { 0, 8, 16, 8, 0, -8, -16, -8, 12, -12, 12, -12 };
+    static const int ry[12] = { -17, -12, 0, 12, 17, 12, 0, -12, -9, -9, 9, 9 };
+    for (int i = 0; i < 12; ++i) {
+        const int outer = radius + ((i & 1) ? 4 : 11);
+        disc(*b, cx + rx[i] * radius / 20, cy + ry[i] * radius / 20,
+             4 + frame, outer / 3, (i & 1) ? 0xF04A24 : 0xFFD34A);
+    }
+    disc(*b, cx, cy, radius, radius, frame < 2 ? 0xF04A24 : 0xE95A24);
+    disc(*b, cx, cy, radius * 3 / 4, radius * 3 / 4,
+         frame < 2 ? 0xFFB52E : 0xFF8C29);
+    disc(*b, cx - 5, cy - 7, radius / 2, radius / 2,
+         frame < 2 ? 0xFFF07A : 0xFFD34A);
+    for (int i = 0; i < 8; ++i) {
+        const int sign = (i & 1) ? -1 : 1;
+        const int px = cx + sign * (18 + i * 3);
+        const int py = cy + ((i & 2) ? -1 : 1) * (14 + (i % 3) * 7);
+        disc(*b, px, py, 2 + (frame < 2), 3 + (frame & 1),
+             (i & 1) ? 0xFFD34A : 0xD83221);
+    }
+    celOutline(*b, 0x9B2418, 1);
+    return b;
+}
+
+/*  The pea splat, three frames: fresh, spread, fading. */
 WBitmap *Atlas::bakeSplat(int frame)
 {
     WBitmap *b = newMasked(18, 18);
@@ -806,7 +882,7 @@ WBitmap *Atlas::bakeTitleBg()
    40 x 88, feet on the bottom row.  A zombie walks LEFT (towards the house on
    the far left), so its face, arms and snout all point left.  Two walk frames
    swap the legs; the eating frame hunches forward and opens the mouth. */
-WBitmap *Atlas::bakeZombie(int frame, int eating)  /* 40 x 88 */
+WBitmap *Atlas::bakeZombie(int frame, int eating, int kind, int chilled)
 {
     WBitmap *b = newMasked(ZOMBIE_W, ZOMBIE_H);
     const int lean = eating ? 2 : 0;
@@ -854,6 +930,21 @@ WBitmap *Atlas::bakeZombie(int frame, int eating)  /* 40 x 88 */
     pxb(*b, 13 + lean, 18, C_ZHAIR);
     pxb(*b, 28 + lean, 18, C_ZHAIR);
     fillRect(*b, 11 + lean, 15, 19, 3, C_ZHAIR);
+    /* elite headgear is silhouette-first so it remains readable at game scale */
+    if (kind == ZK_CONE) {
+        for (int y = 4; y < 18; ++y) {
+            const int half = (y - 4) / 2;
+            fillRect(*b, 20 - half, y, half * 2 + 1, 1,
+                     (y < 7) ? 0xF6A53A : 0xD66B24);
+        }
+        fillRect(*b, 14, 17, 14, 3, 0x9C431D);
+        fillRect(*b, 18, 7, 2, 5, 0xFFD080);
+    } else if (kind == ZK_BUCKET) {
+        fillRect(*b, 12, 5, 18, 12, 0x9BA9AA);
+        fillRect(*b, 10, 15, 22, 3, 0x59686D);
+        fillRect(*b, 14, 7, 13, 2, 0xDDE5DF);
+        fillRect(*b, 13, 18, 2, 5, 0x747D7C);
+    }
     /* eyes: white, pupil aimed the way it walks, a glint pixel */
     disc(*b, 15 + lean, 21, 3, 4, C_ZEYE);
     disc(*b, 24 + lean, 21, 3, 4, C_ZEYE);
@@ -874,6 +965,14 @@ WBitmap *Atlas::bakeZombie(int frame, int eating)  /* 40 x 88 */
     }
     celOutline(*b, 0x22331A, 1);
     celOutline(*b, 0x0C1408, 1);
+    if (chilled) {
+        /* icy shards on the face and coat; added after the outline so the
+           status remains visible even on the dark silhouette. */
+        fillRect(*b, 10 + lean, 24, 2, 9, 0x70DFFF);
+        fillRect(*b, 8 + lean, 27, 6, 2, 0xB8F3FF);
+        fillRect(*b, 22, 42 + bob, 2, 10, 0x70DFFF);
+        fillRect(*b, 19, 46 + bob, 8, 2, 0xB8F3FF);
+    }
     return b;
 }
 
@@ -889,11 +988,14 @@ WBitmap *Atlas::bakeSeed(int i)           /* SEED_W x SEED_H */
     /* the packet's picture: the plant, shaded, on a lighter field */
     fillRect(*b, 8, 10, SEED_W - 16, 42, blend(C_SEEDBG, 0xFFFFFF, 0.22f));
     const int kind = i + 1;
-    if (kind == PL_PEASHOOTER) {
-        discShade(*b, 27, 31, 13, 13, C_PEASH, C_PEASH_LT, C_PEASH_DK);
-        fillRect(*b, 38, 24, 12, 12, C_PEASH_DK);
-        fillRect(*b, 38, 24, 12, 3, C_PEASH);
-        disc(*b, 48, 30, 5, 8, C_PEASH_DK);
+    if (kind == PL_PEASHOOTER || kind == PL_SNOWPEA) {
+        const unsigned long head = kind == PL_SNOWPEA ? C_ICE : C_PEASH;
+        const unsigned long light = kind == PL_SNOWPEA ? C_ICE_LT : C_PEASH_LT;
+        const unsigned long dark = kind == PL_SNOWPEA ? C_ICE_DK : C_PEASH_DK;
+        discShade(*b, 27, 31, 13, 13, head, light, dark);
+        fillRect(*b, 38, 24, 12, 12, dark);
+        fillRect(*b, 38, 24, 12, 3, head);
+        disc(*b, 48, 30, 5, 8, dark);
         disc(*b, 48, 30, 3, 6, 0x243C18);
         disc(*b, 21, 27, 3, 4, C_WHITE); pxb(*b, 22, 28, C_NEARBLACK);
         disc(*b, 33, 26, 3, 4, C_WHITE); pxb(*b, 34, 27, C_NEARBLACK);
@@ -906,7 +1008,14 @@ WBitmap *Atlas::bakeSeed(int i)           /* SEED_W x SEED_H */
         disc(*b, 27, 28, 8, 8, C_CENTER);
         disc(*b, 27, 28, 5, 5, C_CENTER_L);
         pxb(*b, 27, 28, C_SEED_DK);
-    } else {
+    } else if (kind == PL_CHERRY) {
+        fillRect(*b, 27, 16, 2, 15, C_STEM_DK);
+        discShade(*b, 18, 36, 11, 12, 0xD8333B, 0xFF7771, 0x8F1827);
+        discShade(*b, 39, 36, 11, 12, 0xD8333B, 0xFF7771, 0x8F1827);
+        disc(*b, 14, 31, 2, 3, C_WHITE);
+        disc(*b, 35, 31, 2, 3, C_WHITE);
+        fillRect(*b, 24, 22, 8, 2, C_STEM);
+    } else if (kind == PL_WALLNUT) {
         discShade(*b, 28, 31, 16, 17, C_WNUT, C_WNUT_LT, C_WNUT_DK);
         disc(*b, 22, 30, 3, 4, C_WHITE); pxb(*b, 23, 31, C_NEARBLACK);
         disc(*b, 35, 30, 3, 4, C_WHITE); pxb(*b, 34, 31, C_NEARBLACK);

@@ -137,6 +137,23 @@ static int wobble(int phase, int amp)
 
 void Renderer::drawScene(WCanvas &cv, const Lawn &l, const Atlas &a)
 {
+    /* collected-on-click sun drops float over the battlefield */
+    for (int i = 0; i < l.SunDropCount(); ++i) {
+        const SunDrop &d = l.SunDropAt(i);
+        if (!d.alive || !a.Sun()) continue;
+        const int bob = wobble((l.Tick() + i * 11) / 3, 3);
+        blit(cv, *a.Sun(), d.x - 13, d.y - 13 + bob, BLIT_MASK);
+        if ((d.life / 8) & 1)
+            box(cv, d.x - 2, d.y - 18 + bob, 4, 3, UI_SEL, BLIT_COPY);
+    }
+    /* cherry detonations: four baked frames expand from the center */
+    for (int i = 0; i < l.BlastCount(); ++i) {
+        const Blast &b = l.BlastAt(i);
+        if (!b.alive || !a.Blast(0)) continue;
+        const int frame = (BLAST_TICKS - b.life) * BLAST_FRAMES / BLAST_TICKS;
+        WBitmap *g = a.Blast(frame);
+        if (g) blit(cv, *g, b.cx - g->GetW() / 2, b.cy - g->GetH() / 2, BLIT_MASK);
+    }
     /* splats -- the baked pea stain, fresh, spread then fading */
     for (int i = 0; i < l.SplatCount(); ++i) {
         const Splat &s = l.SplatAt(i);
@@ -146,13 +163,15 @@ void Renderer::drawScene(WCanvas &cv, const Lawn &l, const Atlas &a)
     /* peas -- in front of the zombies */
     for (int i = 0; i < l.PeaCount(); ++i) {
         const Pea &p = l.PeaAt(i);
-        if (a.Pea()) blit(cv, *a.Pea(), (int)p.x - PEA_W / 2, FeetY(p.row) - 34, BLIT_MASK);
+        WBitmap *pea = p.kind == PL_SNOWPEA ? a.IcePea() : a.Pea();
+        if (pea) blit(cv, *pea, (int)p.x - PEA_W / 2, FeetY(p.row) - 34, BLIT_MASK);
     }
-    /* zombie sprites */
+    /* zombie sprites carry kind-specific armor and a visible frost status */
     for (int i = 0; i < l.ZombieCount(); ++i) {
         const Zombie &z = l.ZombieAt(i);
-        WBitmap *g = a.Zombie((z.anim / 8) & 1, z.eating);
-        if (g) blit(cv, *g, (int)z.x - ZOMBIE_W / 2, FeetY(z.row) - ZOMBIE_H + 2, BLIT_MASK);
+        WBitmap *g = a.Zombie((z.anim / 8) & 1, z.eating, z.kind, z.chill > 0);
+        if (g) blit(cv, *g, (int)z.x - ZOMBIE_W / 2, FeetY(z.row) - ZOMBIE_H + 2,
+                    z.flash > 0 ? BLIT_BACK : BLIT_MASK);
     }
     /* their shadows (subtract), under the sprites */
     if (a.Shadow())
@@ -208,7 +227,8 @@ void Renderer::drawHud(WCanvas &cv, const Lawn &l, const Atlas &a)
         }
     }
 
-    /* wave read-out, top-right: a wooden chip, text on top of it */
+    /* wave read-out: the remaining count and the current wave share a compact
+       wooden chip, while the upper edge turns gold on set-piece waves. */
     const int tw = a.LabelW(PVZ_LBL_LEFT);
     const int nw = measureNum(a, l.ZombiesLeft());
     const int right = FIELD_W - 12;
@@ -216,6 +236,20 @@ void Renderer::drawHud(WCanvas &cv, const Lawn &l, const Atlas &a)
     drawNum(cv, a, l.ZombiesLeft(), right - nw, 24);
     box(cv, right - tw - nw - 12, 22, tw + nw + 10, 22, UI_WOOD, BLIT_COPY);
     box(cv, right - tw - nw - 15, 19, tw + nw + 16, 28, 0x241C14, BLIT_COPY);
+    const int waveW = 92;
+    const int waveX = FIELD_W - waveW - 14;
+    box(cv, waveX, 54, waveW, 26, UI_WOOD, BLIT_COPY);
+    box(cv, waveX - 3, 51, waveW + 6, 32,
+        (l.Wave() == 5 || l.Wave() == 10) ? UI_SEL : 0x241C14, BLIT_COPY);
+    drawStr(cv, a, "WAVE", waveX + 8, 59);
+    drawNum(cv, a, l.Wave(), waveX + 48, 59);
+    drawStr(cv, a, "/10", waveX + 63, 59);
+    const int total = l.WaveSize();
+    const int done = l.WaveSpawned();
+    if (total > 0) {
+        box(cv, waveX + 8, 76, waveW - 16, 3, 0x3A2A16, BLIT_COPY);
+        box(cv, waveX + 8, 76, (waveW - 16) * done / total, 3, UI_SEL, BLIT_COPY);
+    }
 }
 
 void Renderer::drawEnd(WCanvas &cv, const Lawn &l, const Atlas &a)
@@ -322,14 +356,15 @@ void Renderer::DrawHowto(WCanvas &cv, const Atlas &a)
     drawTextC(cv, a, PVZ_LBL_HOWTO, FIELD_W / 2, 100);
     const int tips[3] = { PVZ_LBL_TIP1, PVZ_LBL_TIP2, PVZ_LBL_TIP3 };
     for (int i = 0; i < 3; ++i) drawText(cv, a, tips[i], 96, 154 + i * 42);
-    const int names[3] = { PVZ_LBL_PEASH, PVZ_LBL_SUNFL, PVZ_LBL_WALLN };
-    for (int i = 0; i < 3; ++i) {
+    const int names[5] = { PVZ_LBL_PEASH, PVZ_LBL_SUNFL, PVZ_LBL_WALLN,
+                            PVZ_LBL_SNOWP, PVZ_LBL_CHERRY };
+    for (int i = 0; i < 5; ++i) {
         WBitmap *pk = a.Seed(i);
-        const int cx = 150 + i * 200;
+        const int cx = 108 + i * 146;
         if (pk) blit(cv, *pk, cx - SEED_W / 2, 300, BLIT_MASK);
         drawTextC(cv, a, names[i], cx, 390);
     }
-    drawTextC(cv, a, PVZ_LBL_ZOMB, 150 + 2 * 200, 268);
+    drawTextC(cv, a, PVZ_LBL_ZOMB, 108 + 4 * 146, 268);
     drawText(cv, a, PVZ_LBL_BACK, 600, FIELD_H - 116);
 
     /* the dark panel behind all of it, with a darker frame as its edge */

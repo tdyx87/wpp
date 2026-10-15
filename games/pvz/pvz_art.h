@@ -33,9 +33,12 @@ class WFont;
 namespace pvz {
 
 enum {
-    /* two walk frames and one chew frame per zombie */
+    /* two walk frames, chew pose, elite variants and frozen overlay */
     ZOMBIE_FRAMES = 2,
-    ZOMBIE_EATS   = 2,          /* 0 walk, 1 chewing */
+    ZOMBIE_EATS   = 2,
+    ZOMBIE_KINDS  = 3,
+    ZOMBIE_CHILL  = 2,
+    BLAST_FRAMES  = 4,
 
     /* the printable ASCII range 32..126, one bitmap per glyph */
     ASCII_FIRST = 32,
@@ -70,9 +73,12 @@ public:
        the plant's remaining hp so chewing is visible.  Everything else
        forwards to Plant(). */
     WBitmap *PlantHp(int kind, int hp) const;
-    WBitmap *Zombie(int frame, int eating) const;   /* frame 0/1, eat 0/1 */
+    WBitmap *Zombie(int frame, int eating, int kind = ZK_NORMAL,
+                    int chilled = 0) const;
     WBitmap *Pea() const { return m_pea; }
-    WBitmap *Splat(int frame) const;                /* 0..SPLAT_FRAMES-1 */
+    WBitmap *IcePea() const { return m_icepea; }
+    WBitmap *Blast(int frame) const;
+    WBitmap *Splat(int frame) const;
     WBitmap *Shadow() const { return m_shadow; }    /* BLIT_SUBTRACT blob  */
     WBitmap *Sun() const { return m_sun; }          /* the HUD sun coin    */
 
@@ -90,11 +96,13 @@ private:
     WBitmap *bakeBackground();
     WBitmap *bakeHouse();
     WBitmap *bakeTitleBg();
-    WBitmap *bakePeashooter();
+    WBitmap *bakePeashooter(int snow);
     WBitmap *bakeSunflower();
     WBitmap *bakeWallnut(int stage);
-    WBitmap *bakeZombie(int frame, int eating);
-    WBitmap *bakePea();
+    WBitmap *bakeCherry();
+    WBitmap *bakeZombie(int frame, int eating, int kind, int chilled);
+    WBitmap *bakePea(int icy);
+    WBitmap *bakeBlast(int frame);
     WBitmap *bakeSplat(int frame);
     WBitmap *bakeShadow();
     WBitmap *bakeSun();
@@ -109,9 +117,11 @@ private:
     WBitmap *m_titlebg;
     WBitmap *m_plant[PL_COUNT];
     WBitmap *m_wnut[3];                       /* wall-nut damage stages */
-    WBitmap *m_zombie[ZOMBIE_FRAMES][ZOMBIE_EATS];
+    WBitmap *m_zombie[ZOMBIE_FRAMES][ZOMBIE_EATS][ZOMBIE_KINDS][ZOMBIE_CHILL];
     WBitmap *m_pea;
+    WBitmap *m_icepea;
     WBitmap *m_splat[SPLAT_FRAMES];
+    WBitmap *m_blast[BLAST_FRAMES];
     WBitmap *m_shadow;
     WBitmap *m_sun;
     WBitmap *m_seed[PL_COUNT - 1];

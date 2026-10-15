@@ -116,10 +116,17 @@ static void test_atlas(void)
     for (int k = PL_PEASHOOTER; k < PL_COUNT; ++k)
         check(g_atlas->Plant(k) != 0, "plant sprite baked");
 
-    check(g_atlas->Zombie(0, 0) && g_atlas->Zombie(1, 1), "zombie frames baked");
-    check(g_atlas->Pea() && g_atlas->Sun() && g_atlas->Shadow(), "props baked");
+    check(g_atlas->Zombie(0, 0) && g_atlas->Zombie(1, 1) &&
+          g_atlas->Zombie(0, 0, ZK_CONE) && g_atlas->Zombie(0, 0, ZK_BUCKET, 1),
+          "zombie frames and armor variants baked");
+    check(g_atlas->Pea() && g_atlas->IcePea() && g_atlas->Sun() &&
+          g_atlas->Blast(0) && g_atlas->Blast(3) && g_atlas->Shadow(),
+          "props and blast frames baked");
     for (int i = 0; i < PL_COUNT - 1; ++i)
         check(g_atlas->Seed(i) != 0, "seed packet baked");
+    check(spriteDiff(g_atlas->Plant(PL_SNOWPEA), g_atlas->Plant(PL_PEASHOOTER)) > 100,
+          "snow pea has a distinct ice palette");
+    check(g_atlas->Plant(PL_CHERRY) != 0, "cherry bomb baked");
     for (int p = 0; p < 3; ++p)
         check(g_atlas->Plaque(p) != 0, "plaque baked");
 
@@ -255,6 +262,12 @@ static void test_geometry(void)
     check(Lawn::PlantCost(PL_PEASHOOTER) == COST_PEASHOOTER, "peashooter cost");
     check(Lawn::PlantCost(PL_SUNFLOWER) == COST_SUNFLOWER, "sunflower cost");
     check(Lawn::PlantCost(PL_WALLNUT) == COST_WALLNUT, "wall-nut cost");
+    check(Lawn::PlantCost(PL_SNOWPEA) == COST_SNOWPEA &&
+          Lawn::PlantCost(PL_CHERRY) == COST_CHERRY, "special plant costs");
+    check(Lawn::WaveSize(1) == 3 && Lawn::WaveSize(5) == 9 &&
+          Lawn::WaveSize(10) == 14, "ten waves have a rising threat curve");
+    check(Lawn::ZombieHp(ZK_CONE) > Lawn::ZombieHp(ZK_NORMAL) &&
+          Lawn::ZombieHp(ZK_BUCKET) > Lawn::ZombieHp(ZK_CONE), "zombie armor raises hp");
     check(Lawn::PlantW(PL_PEASHOOTER) > 0 && Lawn::PlantH(PL_PEASHOOTER) > 0,
           "plants state an art box for the renderer");
 }
@@ -396,6 +409,38 @@ static void test_lose(void)
 }
 
 /* ====================================================================== */
+/*  [I] special plants, armored enemies and collectible sun                */
+/* ====================================================================== */
+static void test_depth(void)
+{
+    printf("[I] roster depth and drops\n");
+    Lawn ice;
+    ice.Reset(7);
+    ice.SetAutoSpawn(0);
+    ice.TestPlant(PL_SNOWPEA, 0, 0);
+    ice.SpawnOne(0, ZK_CONE);
+    for (int i = 0; i < 3000 && ice.Alive() > 0; ++i) ice.Step();
+    check(ice.Kills() > 0, "snow peas can clear an armored zombie");
+    check(ice.CollectedSun() == 0 && ice.SunDropCount() > 0,
+          "a kill creates an uncollected sun drop");
+    const SunDrop &drop = ice.SunDropAt(0);
+    check(ice.TryCollectSun(drop.x, drop.y), "clicking a sun drop collects it");
+    check(ice.CollectedSun() == SUN_ADD, "collected sun enters the bank");
+
+    Lawn cherry;
+    cherry.Reset(7);
+    cherry.SetAutoSpawn(0);
+    cherry.TestPlant(PL_CHERRY, 8, 2);
+    cherry.SpawnOne(2, ZK_BUCKET);
+    /* The rightmost cell puts the forced zombie inside the blast footprint
+       immediately, so the fuse test stays short and deterministic. */
+    for (int i = 0; i < CHERRY_FUSE + 3; ++i) cherry.Step();
+    check(cherry.PlantAt(8, 2) == PL_NONE, "cherry bomb consumes itself after the fuse");
+    check(cherry.Kills() == 1, "cherry bomb defeats the nearby armored zombie");
+    check(cherry.BlastCount() > 0, "cherry bomb leaves an expanding blast");
+}
+
+/* ====================================================================== */
 /*  [H1] determinism; [H2] a strong defence wins                          */
 /* ====================================================================== */
 static void test_determinism(void)
@@ -421,14 +466,17 @@ static void test_win(void)
     Lawn l;
     l.Reset(7);                              /* auto-spawn ON */
     l.AddSun(5000);
-    for (int r = 0; r < ROWS; ++r)
-        for (int cc = 3; cc <= 6; ++cc)
-            l.TestPlant(PL_PEASHOOTER, cc, r);
+    for (int r = 0; r < ROWS; ++r) {
+        for (int cc = 1; cc <= 5; ++cc)
+            l.TestPlant((cc & 1) ? PL_SNOWPEA : PL_PEASHOOTER, cc, r);
+        l.TestPlant(PL_WALLNUT, 7, r);
+        l.TestPlant(PL_CHERRY, 6, r);
+    }
     int steps = 0;
     while (l.Phase() == PHASE_PLAY && steps < 30000) { l.Step(); ++steps; }
     check(l.Phase() == PHASE_WIN, "four peashooters per row win the 12-zombie level");
-    check(l.Spawned() == ZOMBIE_TOTAL, "all twelve zombies spawned");
-    check(l.ZombiesLeft() == 0, "all twelve zombies were killed");
+    check(l.Spawned() == ZOMBIE_TOTAL, "all ten waves spawned");
+    check(l.ZombiesLeft() == 0, "all waves were cleared");
     printf("      level won at frame %d\n", steps);
 }
 
@@ -560,6 +608,7 @@ int main(void)
     test_pea_kill();
     test_eat();
     test_lose();
+    test_depth();
     test_determinism();
     test_win();
     if (g_atlas->Ok()) test_render();

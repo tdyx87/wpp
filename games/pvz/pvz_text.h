@@ -30,14 +30,21 @@ enum PvzLabel {
     PVZ_LBL_PEASH      = 12,
     PVZ_LBL_SUNFL      = 13,
     PVZ_LBL_WALLN      = 14,
-    PVZ_LBL_ZOMB       = 15,
-    PVZ_LBL_SEEDBAR    = 16,
-    PVZ_LBL_LAWN       = 17,
-    PVZ_LBL_TIP1       = 18,
-    PVZ_LBL_TIP2       = 19,
-    PVZ_LBL_TIP3       = 20,
-    PVZ_LBL_KILL       = 21,
-    PVZ_LBL_SELECT     = 22,
+    PVZ_LBL_SNOWP      = 15,
+    PVZ_LBL_CHERRY     = 16,
+    PVZ_LBL_ZOMB       = 17,
+    PVZ_LBL_SEEDBAR    = 18,
+    PVZ_LBL_LAWN       = 19,
+    PVZ_LBL_TIP1       = 20,
+    PVZ_LBL_TIP2       = 21,
+    PVZ_LBL_TIP3       = 22,
+    PVZ_LBL_KILL       = 23,
+    PVZ_LBL_SELECT     = 24,
+    PVZ_LBL_WAVE       = 25,
+    PVZ_LBL_BIGWAVE    = 26,
+    PVZ_LBL_CONE       = 27,
+    PVZ_LBL_BUCKET     = 28,
+    PVZ_LBL_SUNDROP    = 29,
     PVZ_LABEL_COUNT
 };
 
@@ -57,6 +64,8 @@ static const char *const PVZ_LABEL[PVZ_LABEL_COUNT] = {
     "豌豆射手",                  /* PVZ_LBL_PEASH */
     "向日葵",                    /* PVZ_LBL_SUNFL */
     "坚果墙",                    /* PVZ_LBL_WALLN */
+    "寒冰射手",                  /* PVZ_LBL_SNOWP */
+    "樱桃炸弹",                  /* PVZ_LBL_CHERRY */
     "普通僵尸",                  /* PVZ_LBL_ZOMB */
     "种子包",                    /* PVZ_LBL_SEEDBAR */
     "草坪",                      /* PVZ_LBL_LAWN */
@@ -65,6 +74,11 @@ static const char *const PVZ_LABEL[PVZ_LABEL_COUNT] = {
     "把豌豆射手种在僵尸那一行，别让僵尸走到最左边的房子", /* PVZ_LBL_TIP3 */
     "击杀",                      /* PVZ_LBL_KILL */
     "当前选中",                  /* PVZ_LBL_SELECT */
+    "第 %d/10 波",        /* PVZ_LBL_WAVE */
+    "大波僵尸来袭",              /* PVZ_LBL_BIGWAVE */
+    "路障僵尸",                  /* PVZ_LBL_CONE */
+    "铁桶僵尸",                  /* PVZ_LBL_BUCKET */
+    "点击收集阳光",              /* PVZ_LBL_SUNDROP */
 };
 
 } /* namespace pvz */
