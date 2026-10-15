@@ -10,6 +10,9 @@
  *                    headless, no window.
  *    [H] pvz_render -- the renderer is driven into an off-screen WCanvas and
  *                    the pixels are read back with Update()+BlitTo().
+ *    [P] pvz_present -- the 800x600 canvas is fitted into a window of any
+ *                    size; the layout arithmetic and the real canvas -> DIB ->
+ *                    stretched blit the game presents through.
  *
  *  Assertions are about NUMBERS -- counts, extents, channel dominance -- not
  *  exact colours, because every pixel takes a round trip through RGB565.  The
@@ -30,6 +33,7 @@
 #include "pvz_core.h"
 #include "pvz_art.h"
 #include "pvz_render.h"
+#include "pvz_present.h"
 
 using namespace pvz;
 
@@ -570,8 +574,177 @@ static void test_render(void)
           "the howto dark panel covers the page");
 }
 
-/* ------------------------------------------------------------------ dumps */
+/* ====================================================================== */
+/*  [P]  presentation -- the canvas is 800x600, the window is not         */
+/* ====================================================================== */
 
+/*  Where the centre of canvas pixel (cx,cy) lands in the client area.  A
+    canvas pixel covers a whole block of screen pixels when the window is
+    scaled up, and this is the block's middle. */
+static void mapToClient(const PresentRect &r, int cw, int ch,
+                        int cx, int cy, int &px, int &py)
+{
+    px = r.x + (cx * r.w + r.w / 2) / cw;
+    py = r.y + (cy * r.h + r.h / 2) / ch;
+}
+
+static void test_present(void)
+{
+    printf("[P] window fitting\n");
+
+    /*  the canvas exactly filling the window */
+    PresentRect a = PresentFit(800, 600, FIELD_W, FIELD_H, 1);
+    check(a.x == 0 && a.y == 0 && a.w == 800 && a.h == 600,
+          "800x600 client shows the frame 1:1 with no letterbox");
+
+    /*  a 16:9 window: the frame fills the height and the bars go left/right */
+    PresentRect b = PresentFit(1920, 1080, FIELD_W, FIELD_H, 1);
+    check(b.w == 1440 && b.h == 1080, "smooth fit keeps the 4:3 shape");
+    check(b.x == 240 && b.y == 0, "smooth fit centres the frame");
+    check(b.w * FIELD_H == b.h * FIELD_W, "smooth fit is exactly 4:3");
+
+    /*  crisp rounds the scale down to a whole number instead */
+    PresentRect c = PresentFit(1920, 1080, FIELD_W, FIELD_H, 0);
+    check(c.w == 800 && c.h == 600, "crisp fit never scales past the window");
+    check(c.x == 560 && c.y == 240, "crisp fit centres the 1x frame");
+    PresentRect d = PresentFit(1600, 1200, FIELD_W, FIELD_H, 0);
+    check(d.w == 1600 && d.h == 1200 && d.x == 0 && d.y == 0,
+          "crisp fit picks 2x when it fits exactly");
+    PresentRect e = PresentFit(2400, 1800, FIELD_W, FIELD_H, 0);
+    check(e.w == 2400 && e.h == 1800, "crisp fit picks 3x on a big desktop");
+
+    /*  degenerate sizes must still produce a usable rectangle */
+    PresentRect f = PresentFit(0, 0, FIELD_W, FIELD_H, 1);
+    check(f.w >= 1 && f.h >= 1, "a zero-sized client still yields a rectangle");
+    PresentRect g = PresentFit(1, 1, FIELD_W, FIELD_H, 0);
+    check(g.w == 800 && g.h == 600, "crisp fit floors at 1x rather than 0x");
+
+    /*  the mouse: the letterbox is not the lawn, and a click on the lawn
+        survives the round trip at every scale */
+    int cx, cy;
+    check(!PresentUnmap(0, 0, b, FIELD_W, FIELD_H, cx, cy),
+          "a click in the letterbox is rejected");
+    check(!PresentUnmap(239, 540, b, FIELD_W, FIELD_H, cx, cy),
+          "the last letterbox column is rejected");
+    check(!PresentUnmap(1680, 540, b, FIELD_W, FIELD_H, cx, cy),
+          "one past the frame's right edge is rejected");
+
+    int hits = 0;
+    const int probe[8][2] = { {0,0}, {799,0}, {0,599}, {799,599},
+                              {400,300}, {333,120}, {12,587}, {600,44} };
+    for (int i = 0; i < 8; ++i) {
+        int px, py;
+        mapToClient(b, FIELD_W, FIELD_H, probe[i][0], probe[i][1], px, py);
+        if (PresentUnmap(px, py, b, FIELD_W, FIELD_H, cx, cy) &&
+            cx == probe[i][0] && cy == probe[i][1]) ++hits;
+    }
+    check(hits == 8, "every canvas point maps back to itself through the fit");
+
+    /*  and it lands in the same cell, which is what planting depends on */
+    Lawn l;
+    l.Reset(7);
+    int same = 0, tested = 0;
+    for (int cc = 0; cc < COLS; ++cc) {
+        for (int rr = 0; rr < ROWS; ++rr) {
+            const int gx = GRID_X0 + cc * COL_W + COL_W / 2;
+            const int gy = LAWN_Y0 + rr * ROW_H + ROW_H / 2;
+            int px, py, hc, hr;
+            mapToClient(b, FIELD_W, FIELD_H, gx, gy, px, py);
+            if (PresentUnmap(px, py, b, FIELD_W, FIELD_H, cx, cy)) {
+                ++tested;
+                if (l.CellAt(cx, cy, hc, hr) && hc == cc && hr == rr) ++same;
+            }
+        }
+    }
+    check(tested == COLS * ROWS && same == tested,
+          "a scaled click still hits the cell the player aimed at");
+}
+
+/*  The frame leaves the canvas through exactly this path in the game: the
+    composited canvas is blitted into an off-screen 32bpp DIB, which is then
+    stretched to the window.  Drive it for real and read the DIB back -- this
+    is what catches a 565 conversion or a bottom-up row order. */
+static void test_present_blit(void)
+{
+    printf("[P2] canvas -> DIB present path\n");
+
+    const int CW = 64, CH = 64;
+
+    /*  One bitmap with a white top half and a black bottom half, drawn in a
+        single call: WCanvas::Clear(colour) submits at the head of the link
+        list, so it would land ON TOP of anything drawn after it. */
+    WBitmap band(CW, CH);
+    for (int y = 0; y < CH; ++y)
+        for (int x = 0; x < CW; ++x)
+            band[y][x] = WPixel((DWORD)(y < CH / 2 ? 0xFFFFFF : 0x000000));
+
+    WCanvas cv(CW, CH);
+    cv.SetPos(0, 0);
+    cv.Draw(band, BLIT_COPY);
+    cv.Update();
+
+    HDC mem = ::CreateCompatibleDC(0);
+    BITMAPINFO bmi;
+    ::ZeroMemory(&bmi, sizeof(bmi));
+    bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth       = CW;
+    bmi.bmiHeader.biHeight      = -CH;
+    bmi.bmiHeader.biPlanes      = 1;
+    bmi.bmiHeader.biBitCount    = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void *bits = 0;
+    HBITMAP dib = ::CreateDIBSection(0, &bmi, DIB_RGB_COLORS, &bits, 0, 0);
+    check(mem != 0 && dib != 0 && bits != 0, "the off-screen DIB is created");
+    if (!dib) { ::DeleteDC(mem); return; }
+
+    HGDIOBJ old = ::SelectObject(mem, dib);
+    cv.SetPos(0, 0);
+    cv.Update2DC(mem, 0, 0);
+
+    const DWORD *px = (const DWORD *)bits;
+    const DWORD top = px[8 * CW + 8];                    /* 32bpp BI_RGB: 0x00RRGGBB */
+    const DWORD bot = px[56 * CW + 8];
+    check(((top >> 16) & 0xff) > 200 && ((top >> 8) & 0xff) > 200 && (top & 0xff) > 200,
+          "the top of the frame arrives at the top of the DIB");
+    check(((bot >> 16) & 0xff) < 40 && ((bot >> 8) & 0xff) < 40 && (bot & 0xff) < 40,
+          "the bottom of the frame arrives at the bottom of the DIB");
+
+    /*  and the second hop: DIB -> a bigger DIB, exactly as the window blit */
+    HDC dst = ::CreateCompatibleDC(0);
+    BITMAPINFO dbi;
+    ::ZeroMemory(&dbi, sizeof(dbi));
+    dbi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    dbi.bmiHeader.biWidth       = 128;
+    dbi.bmiHeader.biHeight      = -128;
+    dbi.bmiHeader.biPlanes      = 1;
+    dbi.bmiHeader.biBitCount    = 32;
+    dbi.bmiHeader.biCompression = BI_RGB;
+
+    void *dbits = 0;
+    HBITMAP ddib = ::CreateDIBSection(0, &dbi, DIB_RGB_COLORS, &dbits, 0, 0);
+    if (ddib) {
+        HGDIOBJ dold = ::SelectObject(dst, ddib);
+        ::SetStretchBltMode(dst, HALFTONE);
+        ::SetBrushOrgEx(dst, 0, 0, 0);
+        check(::StretchBlt(dst, 0, 0, 128, 128, mem, 0, 0, CW, CH, SRCCOPY) != 0,
+              "the frame stretches into a window-sized target");
+        const DWORD *dp = (const DWORD *)dbits;
+        const DWORD stop = dp[32 * 128 + 64];
+        const DWORD sbot = dp[96 * 128 + 64];
+        check(((stop >> 16) & 0xff) > 200 && ((sbot >> 16) & 0xff) < 40,
+              "the stretched frame keeps its top and bottom halves");
+        ::SelectObject(dst, dold);
+        ::DeleteObject(ddib);
+    }
+    ::DeleteDC(dst);
+
+    ::SelectObject(mem, old);
+    ::DeleteObject(dib);
+    ::DeleteDC(mem);
+}
+
+/* ------------------------------------------------------------------ dumps */
 static void writePPM(WBitmap &b, const char *path)
 {
     FILE *f = fopen(path, "wb");
@@ -586,6 +759,67 @@ static void writePPM(WBitmap &b, const char *path)
             fputc(CHb(c) * 255 / 31, f);
         }
     fclose(f);
+}
+
+/*  A 32bpp BI_RGB buffer as a PPM. */
+static void writePPM32(const void *bits, int w, int h, const char *path)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fprintf(f, "P6\n%d %d\n255\n", w, h);
+    const DWORD *p = (const DWORD *)bits;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const DWORD c = p[y * w + x];
+            fputc((int)((c >> 16) & 0xff), f);
+            fputc((int)((c >> 8) & 0xff), f);
+            fputc((int)(c & 0xff), f);
+        }
+    fclose(f);
+}
+
+/*  The window as it really presents: the frame fitted into a cw x ch client
+    area through the same two GDI calls pvz_game.cpp makes.  This is the one
+    part of the presentation that cannot be asserted headlessly, so it is
+    dumped for a human eye-ball.  mode is the game's ScaleMode. */
+static void dumpWindow(WBitmap &frame, int cw, int ch, int mode, const char *path)
+{
+    const PresentRect r = PresentFit(cw, ch, FIELD_W, FIELD_H, mode != 2);
+
+    BITMAPINFO bmi;
+    ::ZeroMemory(&bmi, sizeof(bmi));
+    bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biPlanes      = 1;
+    bmi.bmiHeader.biBitCount    = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    bmi.bmiHeader.biWidth  = FIELD_W;
+    bmi.bmiHeader.biHeight = -FIELD_H;
+    void *sbits = 0;
+    HBITMAP sdib = ::CreateDIBSection(0, &bmi, DIB_RGB_COLORS, &sbits, 0, 0);
+    HDC sdc = ::CreateCompatibleDC(0);
+    HGDIOBJ sold = ::SelectObject(sdc, sdib);
+
+    bmi.bmiHeader.biWidth  = cw;
+    bmi.bmiHeader.biHeight = -ch;
+    void *dbits = 0;
+    HBITMAP ddib = ::CreateDIBSection(0, &bmi, DIB_RGB_COLORS, &dbits, 0, 0);
+    HDC ddc = ::CreateCompatibleDC(0);
+    HGDIOBJ dold = ::SelectObject(ddc, ddib);
+
+    if (sdib && ddib) {
+        RECT all;
+        ::SetRect(&all, 0, 0, cw, ch);
+        ::FillRect(ddc, &all, (HBRUSH)::GetStockObject(BLACK_BRUSH));
+        frame.Blit2DC(sdc, 0, 0);               /* 565 canvas -> 32bpp DIB */
+        ::SetStretchBltMode(ddc, mode == 1 ? HALFTONE : COLORONCOLOR);
+        ::SetBrushOrgEx(ddc, 0, 0, 0);
+        ::StretchBlt(ddc, r.x, r.y, r.w, r.h, sdc, 0, 0, FIELD_W, FIELD_H, SRCCOPY);
+        writePPM32(dbits, cw, ch, path);
+    }
+
+    ::SelectObject(ddc, dold); ::DeleteObject(ddib); ::DeleteDC(ddc);
+    ::SelectObject(sdc, sold); ::DeleteObject(sdib); ::DeleteDC(sdc);
 }
 
 /* -------------------------------------------------------------------- main */
@@ -612,6 +846,8 @@ int main(void)
     test_determinism();
     test_win();
     if (g_atlas->Ok()) test_render();
+    test_present();
+    test_present_blit();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
 
@@ -636,7 +872,23 @@ int main(void)
         int guard = 0;
         while (d3.Phase() == PHASE_PLAY && guard < 8000) { d3.Step(); ++guard; }
         shot(d3, o); writePPM(o, "pvz_lose.ppm");
-        printf("dumped pvz_{lawn,play,title,howto,lose}.ppm\n");
+
+        /*  and the same play frame as the window shows it on a 1920x1080
+            desktop: filled (nearest), filled (bilinear) and pixel-exact */
+        WBitmap wf;
+        Lawn dw; dw.Reset(7); dw.SetAutoSpawn(0); dw.AddSun(9999);
+        dw.SetSel(PL_SNOWPEA);    dw.TryPlant(1, 2); dw.TryPlant(2, 2);
+        dw.SetSel(PL_PEASHOOTER); dw.TryPlant(3, 3);
+        dw.SetSel(PL_SUNFLOWER);  dw.TryPlant(5, 1);
+        dw.SetSel(PL_WALLNUT);    dw.TryPlant(7, 4);
+        dw.SetSel(PL_CHERRY);     dw.TryPlant(6, 2);
+        dw.SpawnOne(2, ZK_CONE);  dw.SpawnOne(4, ZK_BUCKET);
+        for (int i = 0; i < 150; ++i) dw.Step();
+        shot(dw, wf);
+        dumpWindow(wf, 1440, 1080, 0, "pvz_window.ppm");
+        dumpWindow(wf, 1440, 1080, 1, "pvz_window_smooth.ppm");
+        dumpWindow(wf, 1440, 1080, 2, "pvz_window_pixel.ppm");
+        printf("dumped pvz_{lawn,play,title,howto,lose}.ppm and pvz_window*.ppm\n");
     }
 
     delete g_render;

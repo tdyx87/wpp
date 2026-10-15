@@ -354,8 +354,8 @@ void Renderer::DrawHowto(WCanvas &cv, const Atlas &a)
     m_count = 0;
     /* ---- on top: the text and the seed-packet legend ---- */
     drawTextC(cv, a, PVZ_LBL_HOWTO, FIELD_W / 2, 100);
-    const int tips[3] = { PVZ_LBL_TIP1, PVZ_LBL_TIP2, PVZ_LBL_TIP3 };
-    for (int i = 0; i < 3; ++i) drawText(cv, a, tips[i], 96, 154 + i * 42);
+    const int tips[4] = { PVZ_LBL_TIP1, PVZ_LBL_TIP2, PVZ_LBL_TIP3, PVZ_LBL_TIP4 };
+    for (int i = 0; i < 4; ++i) drawText(cv, a, tips[i], 96, 152 + i * 36);
     const int names[5] = { PVZ_LBL_PEASH, PVZ_LBL_SUNFL, PVZ_LBL_WALLN,
                             PVZ_LBL_SNOWP, PVZ_LBL_CHERRY };
     for (int i = 0; i < 5; ++i) {
@@ -364,7 +364,12 @@ void Renderer::DrawHowto(WCanvas &cv, const Atlas &a)
         if (pk) blit(cv, *pk, cx - SEED_W / 2, 300, BLIT_MASK);
         drawTextC(cv, a, names[i], cx, 390);
     }
-    drawTextC(cv, a, PVZ_LBL_ZOMB, 108 + 4 * 146, 268);
+    /*  The three kinds of zombie the waves send at you.  This used to be a
+        single floating label positioned for a three-packet row; with five
+        packets it landed above the cherry bomb and read as a mislabel. */
+    drawText(cv, a, PVZ_LBL_ZOMB,    96, 428);
+    drawText(cv, a, PVZ_LBL_CONE,   250, 428);
+    drawText(cv, a, PVZ_LBL_BUCKET, 404, 428);
     drawText(cv, a, PVZ_LBL_BACK, 600, FIELD_H - 116);
 
     /* the dark panel behind all of it, with a darker frame as its edge */

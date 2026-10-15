@@ -38,13 +38,14 @@ enum PvzLabel {
     PVZ_LBL_TIP1       = 20,
     PVZ_LBL_TIP2       = 21,
     PVZ_LBL_TIP3       = 22,
-    PVZ_LBL_KILL       = 23,
-    PVZ_LBL_SELECT     = 24,
-    PVZ_LBL_WAVE       = 25,
-    PVZ_LBL_BIGWAVE    = 26,
-    PVZ_LBL_CONE       = 27,
-    PVZ_LBL_BUCKET     = 28,
-    PVZ_LBL_SUNDROP    = 29,
+    PVZ_LBL_TIP4       = 23,
+    PVZ_LBL_KILL       = 24,
+    PVZ_LBL_SELECT     = 25,
+    PVZ_LBL_WAVE       = 26,
+    PVZ_LBL_BIGWAVE    = 27,
+    PVZ_LBL_CONE       = 28,
+    PVZ_LBL_BUCKET     = 29,
+    PVZ_LBL_SUNDROP    = 30,
     PVZ_LABEL_COUNT
 };
 
@@ -72,6 +73,7 @@ static const char *const PVZ_LABEL[PVZ_LABEL_COUNT] = {
     "点种子包选中，再点草坪空位种下植物", /* PVZ_LBL_TIP1 */
     "阳光每 2 秒自动 +25，向日葵也会产出阳光", /* PVZ_LBL_TIP2 */
     "把豌豆射手种在僵尸那一行，别让僵尸走到最左边的房子", /* PVZ_LBL_TIP3 */
+    "窗口可随意拉伸放大，Z 键切换缩放方式，F11 全屏", /* PVZ_LBL_TIP4 */
     "击杀",                      /* PVZ_LBL_KILL */
     "当前选中",                  /* PVZ_LBL_SELECT */
     "第 %d/10 波",        /* PVZ_LBL_WAVE */

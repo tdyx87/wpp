@@ -37,3 +37,7 @@ CMakeUserPresets.json
 # A stray Windows device-name artifact (from a "> nul" redirect mishap)
 /nul
 _out/
+
+# Test screen dumps: pvz_test writes PPMs when PVZ_DUMP=1 and ppm2png.py turns
+# them into PNGs next to them.
+pvz_*.png
